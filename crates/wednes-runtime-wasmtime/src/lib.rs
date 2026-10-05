@@ -97,19 +97,6 @@ impl wednes::function::http_client::Host for HostCtx {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dropping_backend_releases_engine() {
-        let backend = WasmtimeBackend::init().unwrap();
-        let weak = backend.engine.weak();
-        drop(backend);
-        assert!(weak.upgrade().is_none(), "epoch ticker retained engine");
-    }
-}
-
 #[async_trait]
 impl RuntimeBackend for WasmtimeBackend {
     fn init() -> Result<Self> {
@@ -256,5 +243,18 @@ impl RuntimeBackend for WasmtimeBackend {
                 .collect(),
             body: res.body,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_backend_releases_engine() {
+        let backend = WasmtimeBackend::init().unwrap();
+        let weak = backend.engine.weak();
+        drop(backend);
+        assert!(weak.upgrade().is_none(), "epoch ticker retained engine");
     }
 }
