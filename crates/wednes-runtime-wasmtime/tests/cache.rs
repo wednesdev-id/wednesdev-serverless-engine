@@ -99,7 +99,7 @@ fn persistent_cache_across_processes() {
     );
     let stats_file = new_files
         .iter()
-        .find(|p| p.extension().map_or(false, |ext| ext == "stats"))
+        .find(|p| p.extension().is_some_and(|ext| ext == "stats"))
         .unwrap();
     let stats = fs::read_to_string(stats_file).unwrap();
     assert!(
