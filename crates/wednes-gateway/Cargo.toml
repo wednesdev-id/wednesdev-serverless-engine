@@ -1,0 +1,13 @@
+[package]
+name = "wednes-gateway"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wednes-core = { path = "../wednes-core" }
+wednes-runtime = { path = "../wednes-runtime" }
+anyhow.workspace = true
+axum.workspace = true
+tokio.workspace = true
+bytes.workspace = true
+tracing.workspace = true

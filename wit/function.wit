@@ -1,0 +1,24 @@
+package wednes:function@0.1.0;
+
+interface types {
+  record header {
+    name: string,
+    value: string,
+  }
+  record request {
+    method: string,
+    path: string,
+    headers: list<header>,
+    body: list<u8>,
+  }
+  record response {
+    status: u16,
+    headers: list<header>,
+    body: list<u8>,
+  }
+}
+
+world function {
+  use types.{request, response};
+  export handle: func(req: request) -> response;
+}

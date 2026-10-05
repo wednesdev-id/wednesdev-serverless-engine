@@ -1,0 +1,27 @@
+[workspace]
+members = [
+    "crates/wednes-core",
+    "crates/wednes-runtime",
+    "crates/wednes-runtime-wasmtime",
+    "crates/wednes-gateway",
+    "crates/wednes-cli",
+    "sdk/rust",
+    "examples/hello-world",
+    "examples/infinite-loop",
+    "examples/oom"
+]
+resolver = "2"
+
+[workspace.dependencies]
+anyhow = "1.0"
+axum = "0.7"
+tokio = { version = "1.37", features = ["full"] }
+wasmtime = "25.0"
+wasmtime-wasi = "25.0"
+bytes = "1.5"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+clap = { version = "4.5", features = ["derive"] }
+toml = "0.8"

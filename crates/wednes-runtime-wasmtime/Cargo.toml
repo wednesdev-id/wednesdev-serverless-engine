@@ -1,0 +1,17 @@
+[package]
+name = "wednes-runtime-wasmtime"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wednes-core = { path = "../wednes-core" }
+wednes-runtime = { path = "../wednes-runtime" }
+anyhow.workspace = true
+async-trait = "0.1"
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }
