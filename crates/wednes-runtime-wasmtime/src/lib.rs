@@ -155,14 +155,11 @@ impl RuntimeBackend for WasmtimeBackend {
             body: request.body,
         };
 
-        let timeout = Duration::from_millis(
-            runtime
-                .as_ref()
-                .and_then(|r| r.timeout_ms)
-                .unwrap_or(2000),
-        );
+        let timeout =
+            Duration::from_millis(runtime.as_ref().and_then(|r| r.timeout_ms).unwrap_or(2000));
 
-        let res = match tokio::time::timeout(timeout, bindings.call_handle(&mut store, &req)).await {
+        let res = match tokio::time::timeout(timeout, bindings.call_handle(&mut store, &req)).await
+        {
             Ok(Ok(res)) => res,
             Ok(Err(e)) => bail!("Invocation error: {}", e),
             Err(_) => bail!("timeout"),
