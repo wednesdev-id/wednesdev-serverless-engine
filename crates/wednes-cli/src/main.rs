@@ -65,7 +65,10 @@ enum Commands {
 }
 
 fn setup_http3(listen: &str) -> Result<()> {
-    info!("Generating self-signed TLS certificate for HTTP/3 QUIC on {}", listen);
+    info!(
+        "Generating self-signed TLS certificate for HTTP/3 QUIC on {}",
+        listen
+    );
     // ponytail: HTTP/3 requires TLS 1.3 over QUIC. axum/hyper ecosystem requires custom quinn/h3 integration for full HTTP/3 loop.
     // skipped: QUIC listener bind & HTTP/3 multiplexing, add when h3 crate stabilizes with hyper 1.0/axum 0.7.
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
