@@ -237,3 +237,153 @@ wednes_invocation_traps_total 2
 # TYPE wednes_invocation_rejected_total counter
 wednes_invocation_rejected_total 14
 ```
+
+---
+
+## 6. Multi-Language CLI Builder (AWS Lambda / Azure Functions Style)
+
+CLI menyediakan layer abstraksi build untuk mengompilasi kode sumber tingkat tinggi (Python, TypeScript, Go) langsung menjadi biner WebAssembly Component Model tanpa konfigurasi manual Wasmtime.
+
+### Alur Kerja Kompilasi Otomatis
+```text
+User Code (.py, .ts, .go) ──> wednesd CLI Builder ──> Wasm Component (.wasm) ──> wednesd Runtime
+```
+
+### A. Kasus 1: Python Function (Serverless Data Processing)
+Fungsi Python menerima event request, memproses JSON, dan membaca environment variable.
+
+1. **File Sumber (`app.py`):**
+```python
+import json
+import os
+
+def handle(request):
+    env_mode = os.environ.get("ENV", "production")
+    body = json.loads(request.get("body", "{}"))
+    user = body.get("user", "Anonymous")
+    
+    return {
+        "status": 200,
+        "headers": [["content-type", "application/json"]],
+        "body": json.dumps({"message": f"Hello {user}!", "env": env_mode})
+    }
+```
+
+2. **Kompilasi via CLI:**
+```bash
+# Otomatis menggunakan componentize-py di latar belakang
+wednesd build --entry app.py --lang python -o target/app.wasm
+```
+
+---
+
+### B. Kasus 2: TypeScript Webhook Handler
+Menangani verifikasi payload dan webhook eksternal.
+
+1. **File Sumber (`index.ts`):**
+```typescript
+interface HttpRequest {
+  method: string;
+  path: string;
+  headers: [string, string][];
+  body: Uint8Array;
+}
+
+export function handle(req: HttpRequest) {
+  const decoder = new TextDecoder();
+  const payload = JSON.parse(decoder.decode(req.body));
+
+  if (!payload.event) {
+    return { status: 400, headers: [], body: new TextEncoder().encode("Missing event") };
+  }
+
+  return {
+    status: 200,
+    headers: [["content-type", "application/json"]],
+    body: new TextEncoder().encode(JSON.stringify({ received: true, id: payload.id })),
+  };
+}
+```
+
+2. **Kompilasi via CLI:**
+```bash
+# Otomatis menggunakan componentize-js & jco
+wednesd build --entry index.ts --lang ts -o target/webhook.wasm
+```
+
+---
+
+### C. Kasus 3: Go High-Performance Microservice
+Layanan pemrosesan transaksi cepat menggunakan TinyGo.
+
+1. **File Sumber (`main.go`):**
+```go
+package main
+
+import (
+	"encoding/json"
+)
+
+type Request struct {
+	Body []byte `json:"body"`
+}
+
+type Response struct {
+	Status  uint16            `json:"status"`
+	Headers map[string]string `json:"headers"`
+	Body    string            `json:"body"`
+}
+
+func Handle(req Request) Response {
+	var data map[string]interface{}
+	json.Unmarshal(req.Body, &data)
+
+	res := map[string]string{"status": "success", "engine": "wednes"}
+	out, _ := json.Marshal(res)
+
+	return Response{
+		Status:  200,
+		Headers: map[string]string{"content-type": "application/json"},
+		Body:    string(out),
+	}
+}
+
+func main() {}
+```
+
+2. **Kompilasi via CLI:**
+```bash
+# Otomatis memanggil tinygo dengan target wasip1
+wednesd build --entry main.go --lang go -o target/service.wasm
+```
+
+---
+
+### Meneruskan Argumen & Environment Variables
+Konfigurasi diteruskan ke fungsi melalui `manifest.toml` (serupa konfigurasi AWS Lambda console):
+
+```toml
+name = "my-service"
+abi = "wednes:function@0.1.0"
+artifact = "target/service.wasm"
+
+[runtime]
+memory_mb = 64
+timeout_ms = 5000
+
+# Meneruskan environment variables ke guest sandbox
+[environment]
+DB_HOST = "10.0.0.5"
+API_KEY = "secret-token"
+
+[capabilities]
+logging = true
+clock = true
+outbound_http = true
+```
+
+Deploy langsung ke runtime lokal atau server:
+```bash
+wednesd deploy --manifest manifest.toml --registry /tmp/registry.json
+```
+
