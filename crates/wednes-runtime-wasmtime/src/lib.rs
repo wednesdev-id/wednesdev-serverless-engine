@@ -58,7 +58,7 @@ impl RuntimeBackend for WasmtimeBackend {
         config.wasm_component_model(true);
         config.async_support(true);
         config.epoch_interruption(true);
-        // In-memory compiled cache only; no native artifact deserialization.
+        config.cache_config_load_default()?;
 
         let engine = Engine::new(&config)?;
         let mut linker = Linker::new(&engine);
@@ -122,7 +122,10 @@ impl RuntimeBackend for WasmtimeBackend {
         };
 
         let table = ResourceTable::new();
-        let wasi = WasiCtxBuilder::new().inherit_stdio().build();
+        let wasi = WasiCtxBuilder::new()
+            .inherit_stdout()
+            .inherit_stderr()
+            .build();
         let limits = StoreLimitsBuilder::new()
             .memory_size(
                 runtime.as_ref().and_then(|r| r.memory_mb).unwrap_or(32) as usize * 1024 * 1024,
@@ -138,8 +141,6 @@ impl RuntimeBackend for WasmtimeBackend {
         store.limiter(|state| &mut state.limits);
 
         store.epoch_deadline_async_yield_and_update(1);
-
-        let bindings = Function::instantiate_async(&mut store, component, &self.linker).await?;
 
         let req = wednes::function::types::Request {
             method: request.method,
@@ -158,8 +159,12 @@ impl RuntimeBackend for WasmtimeBackend {
         let timeout =
             Duration::from_millis(runtime.as_ref().and_then(|r| r.timeout_ms).unwrap_or(2000));
 
-        let res = match tokio::time::timeout(timeout, bindings.call_handle(&mut store, &req)).await
-        {
+        let exec = async {
+            let bindings = Function::instantiate_async(&mut store, component, &self.linker).await?;
+            bindings.call_handle(&mut store, &req).await
+        };
+
+        let res = match tokio::time::timeout(timeout, exec).await {
             Ok(Ok(res)) => res,
             Ok(Err(e)) => bail!("Invocation error: {}", e),
             Err(_) => bail!("timeout"),

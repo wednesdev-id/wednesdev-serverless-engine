@@ -1,69 +1,105 @@
 use axum::{
     body::Bytes,
-    extract::{Path, State},
+    extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, Method, StatusCode},
     response::{IntoResponse, Response as AxumResponse},
     routing::any,
     Router,
 };
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+use std::time::Instant;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tracing::info;
 use wednes_core::{Header, Request};
 use wednes_runtime::RuntimeBackend;
 
+#[derive(Clone, Debug)]
+pub struct FnConfig {
+    pub concurrency: usize,
+    pub memory_mb: usize,
+}
+
 pub struct Scheduler {
     global_sem: Arc<Semaphore>,
-    fn_limits: HashMap<String, usize>,
-    default_fn_concurrency: usize,
-    fn_sems: Mutex<HashMap<String, Arc<Semaphore>>>,
+    memory_sem: Arc<Semaphore>,
+    fn_configs: HashMap<String, FnConfig>,
+    fn_sems: HashMap<String, Arc<Semaphore>>,
+    unknown_sem: Arc<Semaphore>,
+
+    pub active_invocations: Arc<AtomicUsize>,
+    pub total_invocations: Arc<AtomicUsize>,
+    pub traps: Arc<AtomicUsize>,
+    pub rejected: Arc<AtomicUsize>,
 }
 
 pub struct ExecutionPermits {
     _global: OwnedSemaphorePermit,
     _function: OwnedSemaphorePermit,
+    _memory: OwnedSemaphorePermit,
 }
 
 impl Scheduler {
     pub fn new(
         global_limit: usize,
-        fn_limits: HashMap<String, usize>,
+        memory_budget_mb: usize,
+        fn_configs: HashMap<String, FnConfig>,
         default_fn_concurrency: usize,
     ) -> Self {
+        let mut fn_sems = HashMap::new();
+        for (id, cfg) in &fn_configs {
+            fn_sems.insert(id.clone(), Arc::new(Semaphore::new(cfg.concurrency)));
+        }
+
         Self {
             global_sem: Arc::new(Semaphore::new(global_limit)),
-            fn_limits,
-            default_fn_concurrency,
-            fn_sems: Mutex::new(HashMap::new()),
+            memory_sem: Arc::new(Semaphore::new(memory_budget_mb)),
+            fn_configs,
+            fn_sems,
+            unknown_sem: Arc::new(Semaphore::new(default_fn_concurrency)),
+            active_invocations: Arc::new(AtomicUsize::new(0)),
+            total_invocations: Arc::new(AtomicUsize::new(0)),
+            traps: Arc::new(AtomicUsize::new(0)),
+            rejected: Arc::new(AtomicUsize::new(0)),
         }
     }
 
     pub fn try_acquire(&self, fn_id: &str) -> Result<ExecutionPermits, ()> {
-        let global = self
-            .global_sem
+        let mem_req = self
+            .fn_configs
+            .get(fn_id)
+            .map(|c| c.memory_mb)
+            .unwrap_or(32);
+
+        let memory = self
+            .memory_sem
             .clone()
-            .try_acquire_owned()
+            .try_acquire_many_owned(mem_req as u32)
             .map_err(|_| ())?;
 
-        let fn_sem = {
-            let mut sems = self.fn_sems.lock().unwrap();
-            sems.entry(fn_id.to_string())
-                .or_insert_with(|| {
-                    let limit = self
-                        .fn_limits
-                        .get(fn_id)
-                        .copied()
-                        .unwrap_or(self.default_fn_concurrency);
-                    Arc::new(Semaphore::new(limit))
-                })
-                .clone()
+        let global = match self.global_sem.clone().try_acquire_owned() {
+            Ok(g) => g,
+            Err(_) => {
+                return Err(());
+            }
         };
 
-        let fn_permit = fn_sem.try_acquire_owned().map_err(|_| ())?;
+        let fn_sem = self.fn_sems.get(fn_id).unwrap_or(&self.unknown_sem).clone();
+
+        let fn_permit = match fn_sem.try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                return Err(());
+            }
+        };
 
         Ok(ExecutionPermits {
             _global: global,
             _function: fn_permit,
+            _memory: memory,
         })
     }
 }
@@ -79,6 +115,7 @@ pub fn create_router(runtime: Arc<dyn RuntimeBackend>, scheduler: Arc<Scheduler>
     Router::new()
         .route("/fn/:id", any(handle_function_root))
         .route("/fn/:id/*path", any(handle_function_subpath))
+        .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
         .with_state(state)
 }
 
@@ -111,12 +148,33 @@ async fn dispatch(
     headers: HeaderMap,
     body: Bytes,
 ) -> AxumResponse {
+    let start = Instant::now();
+    state
+        .scheduler
+        .total_invocations
+        .fetch_add(1, Ordering::Relaxed);
+
     let _permits = match state.scheduler.try_acquire(&id) {
         Ok(p) => p,
         Err(_) => {
+            state.scheduler.rejected.fetch_add(1, Ordering::Relaxed);
+            info!(
+                id = %id,
+                status = 429,
+                duration_ms = start.elapsed().as_millis(),
+                traps = false,
+                reject = true,
+                active = state.scheduler.active_invocations.load(Ordering::Relaxed),
+                "invocation rejected"
+            );
             return (StatusCode::TOO_MANY_REQUESTS, "Too Many Requests").into_response();
         }
     };
+
+    state
+        .scheduler
+        .active_invocations
+        .fetch_add(1, Ordering::Relaxed);
 
     let mut req_headers = Vec::new();
     for (k, v) in headers.iter() {
@@ -137,6 +195,21 @@ async fn dispatch(
 
     match state.runtime.execute(&id, req).await {
         Ok(res) => {
+            state
+                .scheduler
+                .active_invocations
+                .fetch_sub(1, Ordering::Relaxed);
+            let duration = start.elapsed().as_millis();
+            info!(
+                id = %id,
+                status = res.status,
+                duration_ms = duration,
+                traps = false,
+                reject = false,
+                active = state.scheduler.active_invocations.load(Ordering::Relaxed),
+                "invocation completed"
+            );
+
             let mut builder = axum::http::Response::builder().status(
                 StatusCode::from_u16(res.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             );
@@ -155,11 +228,29 @@ async fn dispatch(
                         .into_response()
                 })
         }
-        Err(err) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Invocation error: {err}"),
-        )
-            .into_response(),
+        Err(err) => {
+            state
+                .scheduler
+                .active_invocations
+                .fetch_sub(1, Ordering::Relaxed);
+            state.scheduler.traps.fetch_add(1, Ordering::Relaxed);
+            let duration = start.elapsed().as_millis();
+            info!(
+                id = %id,
+                status = 500,
+                duration_ms = duration,
+                traps = true,
+                reject = false,
+                error = %err,
+                active = state.scheduler.active_invocations.load(Ordering::Relaxed),
+                "invocation trapped"
+            );
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Invocation error: {err}"),
+            )
+                .into_response()
+        }
     }
 }
 
@@ -169,9 +260,15 @@ mod tests {
 
     #[test]
     fn scheduler_limits_per_function_and_releases() {
-        let mut fn_limits = HashMap::new();
-        fn_limits.insert("fn1".to_string(), 2);
-        let scheduler = Scheduler::new(10, fn_limits, 5);
+        let mut fn_configs = HashMap::new();
+        fn_configs.insert(
+            "fn1".to_string(),
+            FnConfig {
+                concurrency: 2,
+                memory_mb: 32,
+            },
+        );
+        let scheduler = Scheduler::new(10, 1200, fn_configs, 5);
 
         // First two should succeed
         let p1 = scheduler.try_acquire("fn1");
@@ -195,7 +292,7 @@ mod tests {
 
     #[test]
     fn scheduler_global_limit() {
-        let scheduler = Scheduler::new(2, HashMap::new(), 10);
+        let scheduler = Scheduler::new(2, 1200, HashMap::new(), 10);
 
         let p1 = scheduler.try_acquire("a");
         assert!(p1.is_ok());
@@ -210,4 +307,29 @@ mod tests {
         let p4 = scheduler.try_acquire("c");
         assert!(p4.is_ok());
     }
+
+    #[test]
+    fn scheduler_memory_limit() {
+        let mut fn_configs = HashMap::new();
+        fn_configs.insert(
+            "huge".to_string(),
+            FnConfig {
+                concurrency: 10,
+                memory_mb: 1000,
+            },
+        );
+        let scheduler = Scheduler::new(10, 1200, fn_configs, 5);
+
+        let p1 = scheduler.try_acquire("huge");
+        assert!(p1.is_ok());
+
+        let p2 = scheduler.try_acquire("huge");
+        assert!(p2.is_err()); // 1000 + 1000 > 1200
+
+        // Release p1
+        drop(p1);
+        let p3 = scheduler.try_acquire("huge");
+        assert!(p3.is_ok());
+    }
 }
+mod gateway_tests;

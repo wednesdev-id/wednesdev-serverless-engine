@@ -397,3 +397,110 @@ timeout_ms = 1000
     daemon.kill()?;
     Ok(())
 }
+
+#[tokio::test]
+async fn test_log_json_and_memory_budget_exhaustion() -> Result<()> {
+    let tmp = tempfile::tempdir()?;
+    let registry = tmp.path().join("registry.json");
+    let hello_wasm_dest = tmp.path().join("hello.wasm");
+    let hello_wasm = std::path::PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("../../target/hello.wasm");
+    fs::copy(&hello_wasm, &hello_wasm_dest)?;
+
+    // We will deploy a function that requests 1000MB memory.
+    let manifest_path = tmp.path().join("hello.toml");
+    fs::write(
+        &manifest_path,
+        r#"
+name = "hello"
+abi = "wednes:function@0.1.0"
+artifact = "hello.wasm"
+
+[runtime]
+memory_mb = 1000
+timeout_ms = 5000
+"#,
+    )?;
+
+    let status = Command::new(cli())
+        .arg("deploy")
+        .arg("--manifest")
+        .arg(&manifest_path)
+        .arg("--registry")
+        .arg(&registry)
+        .status()?;
+    assert!(status.success());
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    // Run daemon with --log-json and memory budget of 500MB
+    // Function requests 1000MB, so it should always be rejected with 429 immediately!
+    let mut daemon = Command::new(cli())
+        .arg("run")
+        .arg("--listen")
+        .arg(format!("127.0.0.1:{}", port))
+        .arg("--registry")
+        .arg(&registry)
+        .arg("--log-json")
+        .arg("--memory-budget-mb")
+        .arg("500")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()?;
+
+    let mut ready = false;
+    for _ in 0..50 {
+        if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+            .await
+            .is_ok()
+        {
+            ready = true;
+            break;
+        }
+        tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+    }
+    assert!(ready, "Daemon failed to start");
+
+    // Send a request
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+        .await
+        .unwrap();
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    stream
+        .write_all(b"GET /fn/hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut buf = vec![0; 1024];
+    let n = stream.read(&mut buf).await.unwrap();
+    let resp = String::from_utf8_lossy(&buf[..n]).to_string();
+
+    assert!(
+        resp.contains("HTTP/1.1 429 Too Many Requests"),
+        "Must reject when function memory exceeds budget"
+    );
+
+    daemon.kill()?;
+    let output = daemon.wait_with_output()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let all_output = format!("{}\n{}", stdout, stderr);
+
+    // There should be valid JSON lines
+    let mut found_reject = false;
+    for line in all_output.lines() {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(line) {
+            let fields = json.get("fields").unwrap_or(&json);
+            if let Some(msg) = fields.get("message").and_then(|m| m.as_str()) {
+                if msg == "invocation rejected" {
+                    found_reject = true;
+                }
+            }
+        }
+    }
+
+    assert!(found_reject, "Should find JSON log for rejection");
+
+    Ok(())
+}

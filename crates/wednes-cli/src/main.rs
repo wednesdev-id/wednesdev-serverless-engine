@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
 use wednes_core::{manifest::Manifest, registry::FileRegistry};
-use wednes_gateway::{create_router, Scheduler};
+use wednes_gateway::{create_router, FnConfig, Scheduler};
 use wednes_runtime::RuntimeBackend;
 use wednes_runtime_wasmtime::WasmtimeBackend;
 
@@ -26,8 +26,12 @@ struct Args {
 
     #[arg(long, default_value_t = 100, global = true)]
     global_concurrency: usize,
+    #[arg(long, default_value_t = 1200, global = true)]
+    memory_budget_mb: usize,
     #[arg(long, default_value_t = 16, global = true)]
     default_concurrency: usize,
+    #[arg(long, global = true)]
+    log_json: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -45,6 +49,8 @@ enum Commands {
         registry: PathBuf,
         #[arg(long, default_value_t = 100)]
         global_concurrency: usize,
+        #[arg(long, default_value_t = 1200)]
+        memory_budget_mb: usize,
         #[arg(long, default_value_t = 16)]
         default_concurrency: usize,
     },
@@ -52,9 +58,13 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    tracing_subscriber::fmt::init();
-
     let args = Args::parse();
+
+    if args.log_json {
+        tracing_subscriber::fmt().json().init();
+    } else {
+        tracing_subscriber::fmt::init();
+    }
 
     match args.command {
         Some(Commands::Deploy { manifest, registry }) => {
@@ -87,11 +97,12 @@ async fn main() -> Result<()> {
             listen,
             registry,
             global_concurrency,
+            memory_budget_mb,
             default_concurrency,
         }) => {
             let reg = FileRegistry::open(&registry)?;
             let mut backend = WasmtimeBackend::init()?;
-            let mut fn_limits = HashMap::new();
+            let mut fn_configs = HashMap::new();
             for (id, manifest) in reg.data.functions.iter() {
                 // Here we rely on Wasmtime's cache since we call load_module with the artifact path
                 let artifact_path = registry
@@ -99,14 +110,29 @@ async fn main() -> Result<()> {
                     .unwrap_or(std::path::Path::new(""))
                     .join(&manifest.artifact);
                 backend.load_manifest(manifest, &artifact_path)?;
-                if let Some(conc) = manifest.runtime.as_ref().and_then(|r| r.max_concurrency) {
-                    fn_limits.insert(id.clone(), conc as usize);
-                }
+                let conc = manifest
+                    .runtime
+                    .as_ref()
+                    .and_then(|r| r.max_concurrency)
+                    .unwrap_or(default_concurrency as u32) as usize;
+                let mem = manifest
+                    .runtime
+                    .as_ref()
+                    .and_then(|r| r.memory_mb)
+                    .unwrap_or(32) as usize;
+                fn_configs.insert(
+                    id.clone(),
+                    FnConfig {
+                        concurrency: conc,
+                        memory_mb: mem,
+                    },
+                );
                 info!("Loaded function '{}'", id);
             }
             let scheduler = Arc::new(Scheduler::new(
                 global_concurrency,
-                fn_limits,
+                memory_budget_mb,
+                fn_configs,
                 default_concurrency,
             ));
             let runtime: Arc<dyn RuntimeBackend> = Arc::new(backend);
@@ -126,6 +152,7 @@ async fn main() -> Result<()> {
             }
             let scheduler = Arc::new(Scheduler::new(
                 args.global_concurrency,
+                args.memory_budget_mb,
                 HashMap::new(),
                 args.default_concurrency,
             ));
