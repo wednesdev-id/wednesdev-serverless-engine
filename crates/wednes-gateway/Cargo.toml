@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 wednes-core = { path = "../wednes-core" }
 wednes-runtime = { path = "../wednes-runtime" }
+wednes-telemetry = { path = "../wednes-telemetry" }
 anyhow.workspace = true
 axum.workspace = true
 tokio.workspace = true

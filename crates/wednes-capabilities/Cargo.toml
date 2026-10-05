@@ -1,9 +1,8 @@
 [package]
-name = "wednes-sdk"
+name = "wednes-capabilities"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-wit-bindgen = "0.32"
+anyhow = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }

@@ -1,6 +1,8 @@
 [workspace]
 members = [
     "crates/wednes-core",
+    "crates/wednes-telemetry",
+    "crates/wednes-capabilities",
     "crates/wednes-runtime",
     "crates/wednes-runtime-wasmtime",
     "crates/wednes-gateway",

@@ -1,7 +1,4 @@
-wit_bindgen::generate!({
-    world: "function",
-    path: "../../wit",
-});
+use wednes_sdk::{export, Guest, Request, Response};
 
 struct Component;
 

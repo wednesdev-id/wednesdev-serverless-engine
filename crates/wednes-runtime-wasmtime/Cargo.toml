@@ -6,12 +6,14 @@ edition = "2021"
 [dependencies]
 wednes-core = { path = "../wednes-core" }
 wednes-runtime = { path = "../wednes-runtime" }
+wednes-capabilities = { path = "../wednes-capabilities" }
 anyhow.workspace = true
 async-trait = "0.1"
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "charset", "http2", "macos-system-configuration"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full"] }

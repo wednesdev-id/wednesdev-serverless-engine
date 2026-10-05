@@ -1,30 +1,28 @@
-wit_bindgen::generate!({ world: "function", path: "../../wit" });
-use wednes::function::types::Header;
+use wednes_sdk::{export, Guest, Request, Response};
 
 struct Component;
 
 impl Guest for Component {
     fn handle(req: Request) -> Response {
-        let (status, body) = transform(&req.body);
-        Response {
-            status,
-            headers: vec![Header {
-                name: "content-type".to_string(),
-                value: "application/json".to_string(),
-            }],
-            body,
+        match req.json::<serde_json::Value>() {
+            Ok(v) => {
+                let out = serde_json::json!({ "echo": v, "engine": "wednes" });
+                Response::json(200, out.to_string())
+            }
+            Err(_) => Response::json(400, r#"{"error":"invalid json"}"#),
         }
     }
 }
 
 fn transform(body: &[u8]) -> (u16, Vec<u8>) {
-    match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(v) => {
-            let out = serde_json::json!({ "echo": v, "engine": "wednes" });
-            (200, serde_json::to_vec(&out).unwrap())
-        }
-        Err(_) => (400, br#"{"error":"invalid json"}"#.to_vec()),
-    }
+    let req = Request {
+        method: "POST".to_string(),
+        path: "/".to_string(),
+        headers: vec![],
+        body: body.to_vec(),
+    };
+    let res = Component::handle(req);
+    (res.status, res.body)
 }
 
 export!(Component);

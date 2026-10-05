@@ -1,5 +1,6 @@
 use anyhow::{bail, Result};
 use serde::{Deserialize, Serialize};
+pub use wednes_capabilities::Capabilities;
 
 pub const SUPPORTED_ABI: &str = "wednes:function@0.1.0";
 
@@ -21,16 +22,6 @@ pub struct RuntimeConfig {
     pub memory_mb: Option<u32>,
     pub timeout_ms: Option<u64>,
     pub max_concurrency: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct Capabilities {
-    pub logging: Option<bool>,
-    pub clock: Option<bool>,
-    pub environment: Option<bool>,
-    pub outbound_http: Option<bool>,
-    pub filesystem: Option<bool>,
 }
 
 impl Manifest {
@@ -81,20 +72,7 @@ impl Manifest {
             }
         }
 
-        if let Some(caps) = &self.capabilities {
-            if caps.logging.is_some() || caps.clock.is_some() {
-                bail!("logging/clock capability configuration unsupported until M4");
-            }
-            if caps.outbound_http == Some(true) {
-                bail!("unsupported capability: outbound_http is not supported in M3");
-            }
-            if caps.filesystem == Some(true) {
-                bail!("unsupported capability: filesystem is not supported in M3");
-            }
-            if caps.environment == Some(true) {
-                bail!("unsupported capability: environment is not supported in M3");
-            }
-        }
+        wednes_capabilities::check_capabilities(&self.capabilities)?;
 
         Ok(())
     }

@@ -36,6 +36,10 @@ struct Args {
 
 #[derive(Subcommand, Debug)]
 enum Commands {
+    Init {
+        name: String,
+    },
+    Dev,
     Deploy {
         #[arg(short, long)]
         manifest: PathBuf,
@@ -67,6 +71,119 @@ async fn main() -> Result<()> {
     }
 
     match args.command {
+        Some(Commands::Init { name }) => {
+            let project_path = std::env::current_dir()?.join(&name);
+            fs::create_dir_all(&project_path)?;
+
+            let cargo_toml = format!(
+                r#"[package]
+name = "{name}"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wednes-sdk = {{ version = "*" }}
+"#
+            );
+            fs::write(project_path.join("Cargo.toml"), cargo_toml)?;
+
+            let manifest = format!(
+                r#"[manifest]
+name = "{name}"
+abi = "wednes:function@0.1.0"
+artifact = "target/wasm32-wasip1/release/{name}.wasm"
+
+[runtime]
+memory_mb = 128
+max_concurrency = 10
+"#
+            );
+            fs::write(project_path.join("wednes.toml"), manifest)?;
+
+            let src_dir = project_path.join("src");
+            fs::create_dir_all(&src_dir)?;
+            let lib_rs = r#"use wednes_sdk::{export, bindings::Guest, Request, Response};
+
+struct Component;
+
+impl Guest for Component {
+    fn handle(_req: Request) -> Response {
+        Response::json(200, "{\"message\": \"hello from wednes\"}")
+    }
+}
+
+export!(Component);
+"#;
+            fs::write(src_dir.join("lib.rs"), lib_rs)?;
+            info!("Initialized {} successfully", name);
+            Ok(())
+        }
+        Some(Commands::Dev) => {
+            // Find project name from Cargo.toml or wednes.toml
+            let cargo_toml_str = fs::read_to_string("Cargo.toml").unwrap_or_default();
+            let name = cargo_toml_str
+                .lines()
+                .find(|l| l.starts_with("name = "))
+                .and_then(|l| l.split('=').nth(1))
+                .unwrap_or(r#""dev""#)
+                .trim()
+                .trim_matches('"');
+
+            let wasm_name = name.replace('-', "_");
+            let wasm_path = format!("target/wasm32-wasip1/release/{}.wasm", wasm_name);
+
+            use notify::{Event, RecursiveMode, Watcher};
+            use std::process::Command;
+            use std::sync::mpsc::channel;
+
+            let (tx, rx) = channel();
+            let mut watcher = notify::recommended_watcher(tx)?;
+            watcher.watch(std::path::Path::new("src"), RecursiveMode::Recursive)?;
+
+            let mut server: Option<std::process::Child> = None;
+
+            let mut rebuild = || {
+                info!("Compiling...");
+                let status = Command::new("cargo")
+                    .args(["build", "--target", "wasm32-wasip1", "--release"])
+                    .status();
+                match status {
+                    Ok(s) if s.success() => {
+                        if let Some(mut child) = server.take() {
+                            let _ = child.kill();
+                            let _ = child.wait();
+                        }
+                        if let Ok(exe) = std::env::current_exe() {
+                            info!("Starting server...");
+                            server = Command::new(exe)
+                                .args(["--id", name, "--wasm", &wasm_path])
+                                .spawn()
+                                .ok();
+                        }
+                    }
+                    _ => {
+                        info!("Build failed");
+                    }
+                }
+            };
+
+            rebuild();
+
+            for res in rx {
+                match res {
+                    Ok(Event { kind, .. }) => {
+                        if kind.is_modify() || kind.is_create() || kind.is_remove() {
+                            rebuild();
+                        }
+                    }
+                    Err(e) => info!("watch error: {:?}", e),
+                }
+            }
+            Ok(())
+        }
         Some(Commands::Deploy { manifest, registry }) => {
             let m_bytes = fs::read(&manifest)?;
             let manifest_str = String::from_utf8(m_bytes)?;

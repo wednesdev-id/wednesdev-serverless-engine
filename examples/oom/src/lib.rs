@@ -1,7 +1,4 @@
-wit_bindgen::generate!({
-    world: "function",
-    path: "../../wit",
-});
+use wednes_sdk::{export, Guest, Request, Response};
 
 struct Component;
 
@@ -15,11 +12,7 @@ impl Guest for Component {
         }
 
         let body = format!("OOM test survived with {} buffers", vecs.len());
-        Response {
-            status: 200,
-            headers: vec![],
-            body: body.into_bytes(),
-        }
+        Response::text(200, body)
     }
 }
 

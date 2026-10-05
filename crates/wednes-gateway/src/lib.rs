@@ -8,14 +8,14 @@ use axum::{
 };
 use std::collections::HashMap;
 use std::sync::{
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicU64, AtomicUsize},
     Arc,
 };
 use std::time::Instant;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
-use tracing::info;
 use wednes_core::{Header, Request};
 use wednes_runtime::RuntimeBackend;
+use wednes_telemetry::Telemetry;
 
 #[derive(Clone, Debug)]
 pub struct FnConfig {
@@ -30,10 +30,12 @@ pub struct Scheduler {
     fn_sems: HashMap<String, Arc<Semaphore>>,
     unknown_sem: Arc<Semaphore>,
 
+    pub telemetry: Telemetry,
     pub active_invocations: Arc<AtomicUsize>,
     pub total_invocations: Arc<AtomicUsize>,
     pub traps: Arc<AtomicUsize>,
     pub rejected: Arc<AtomicUsize>,
+    pub total_duration_ms: Arc<AtomicU64>,
 }
 
 pub struct ExecutionPermits {
@@ -54,16 +56,20 @@ impl Scheduler {
             fn_sems.insert(id.clone(), Arc::new(Semaphore::new(cfg.concurrency)));
         }
 
+        let telemetry = Telemetry::new();
+
         Self {
             global_sem: Arc::new(Semaphore::new(global_limit)),
             memory_sem: Arc::new(Semaphore::new(memory_budget_mb)),
             fn_configs,
             fn_sems,
             unknown_sem: Arc::new(Semaphore::new(default_fn_concurrency)),
-            active_invocations: Arc::new(AtomicUsize::new(0)),
-            total_invocations: Arc::new(AtomicUsize::new(0)),
-            traps: Arc::new(AtomicUsize::new(0)),
-            rejected: Arc::new(AtomicUsize::new(0)),
+            active_invocations: telemetry.active_invocations.clone(),
+            total_invocations: telemetry.total_invocations.clone(),
+            traps: telemetry.traps.clone(),
+            rejected: telemetry.rejected.clone(),
+            total_duration_ms: telemetry.total_duration_ms.clone(),
+            telemetry,
         }
     }
 
@@ -113,6 +119,7 @@ pub fn create_router(runtime: Arc<dyn RuntimeBackend>, scheduler: Arc<Scheduler>
     let state = Arc::new(GatewayState { runtime, scheduler });
 
     Router::new()
+        .route("/metrics", axum::routing::get(handle_metrics))
         .route("/fn/:id", any(handle_function_root))
         .route("/fn/:id/*path", any(handle_function_subpath))
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
@@ -149,32 +156,17 @@ async fn dispatch(
     body: Bytes,
 ) -> AxumResponse {
     let start = Instant::now();
-    state
-        .scheduler
-        .total_invocations
-        .fetch_add(1, Ordering::Relaxed);
+    state.scheduler.telemetry.record_start();
 
     let _permits = match state.scheduler.try_acquire(&id) {
         Ok(p) => p,
         Err(_) => {
-            state.scheduler.rejected.fetch_add(1, Ordering::Relaxed);
-            info!(
-                id = %id,
-                status = 429,
-                duration_ms = start.elapsed().as_millis(),
-                traps = false,
-                reject = true,
-                active = state.scheduler.active_invocations.load(Ordering::Relaxed),
-                "invocation rejected"
-            );
+            state.scheduler.telemetry.record_reject(&id, start);
             return (StatusCode::TOO_MANY_REQUESTS, "Too Many Requests").into_response();
         }
     };
 
-    state
-        .scheduler
-        .active_invocations
-        .fetch_add(1, Ordering::Relaxed);
+    state.scheduler.telemetry.record_accept();
 
     let mut req_headers = Vec::new();
     for (k, v) in headers.iter() {
@@ -197,18 +189,8 @@ async fn dispatch(
         Ok(res) => {
             state
                 .scheduler
-                .active_invocations
-                .fetch_sub(1, Ordering::Relaxed);
-            let duration = start.elapsed().as_millis();
-            info!(
-                id = %id,
-                status = res.status,
-                duration_ms = duration,
-                traps = false,
-                reject = false,
-                active = state.scheduler.active_invocations.load(Ordering::Relaxed),
-                "invocation completed"
-            );
+                .telemetry
+                .record_complete(&id, res.status, start);
 
             let mut builder = axum::http::Response::builder().status(
                 StatusCode::from_u16(res.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -229,22 +211,7 @@ async fn dispatch(
                 })
         }
         Err(err) => {
-            state
-                .scheduler
-                .active_invocations
-                .fetch_sub(1, Ordering::Relaxed);
-            state.scheduler.traps.fetch_add(1, Ordering::Relaxed);
-            let duration = start.elapsed().as_millis();
-            info!(
-                id = %id,
-                status = 500,
-                duration_ms = duration,
-                traps = true,
-                reject = false,
-                error = %err,
-                active = state.scheduler.active_invocations.load(Ordering::Relaxed),
-                "invocation trapped"
-            );
+            state.scheduler.telemetry.record_trap(&id, &err, start);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Invocation error: {err}"),
@@ -252,6 +219,10 @@ async fn dispatch(
                 .into_response()
         }
     }
+}
+
+async fn handle_metrics(State(state): State<Arc<GatewayState>>) -> String {
+    state.scheduler.telemetry.prometheus_metrics()
 }
 
 #[cfg(test)]

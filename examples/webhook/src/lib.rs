@@ -1,6 +1,7 @@
-wit_bindgen::generate!({ world: "function", path: "../../wit" });
-use wednes::function::types::Header;
+use wednes_sdk::{export, Guest, Request, Response};
+
 struct Component;
+
 impl Guest for Component {
     fn handle(req: Request) -> Response {
         let payload_len = req.body.len();
@@ -8,21 +9,16 @@ impl Guest for Component {
             r#"{{"received":true,"method":"{}","payload_bytes":{}}}"#,
             req.method, payload_len
         );
-        Response {
-            status: 200,
-            headers: vec![Header {
-                name: "content-type".to_string(),
-                value: "application/json".to_string(),
-            }],
-            body: body.into_bytes(),
-        }
+        Response::json(200, body)
     }
 }
+
 export!(Component);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
     fn ack_returns_200() {
         let result = Component::handle(Request {

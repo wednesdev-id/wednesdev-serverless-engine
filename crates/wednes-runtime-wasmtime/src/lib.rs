@@ -18,13 +18,14 @@ bindgen!({
 pub struct WasmtimeBackend {
     engine: Engine,
     linker: Linker<HostCtx>,
-    components: HashMap<String, (Component, Option<wednes_core::manifest::RuntimeConfig>)>,
+    components: HashMap<String, (Component, Option<wednes_core::manifest::Manifest>)>,
 }
 
 pub struct HostCtx {
     table: ResourceTable,
     wasi: WasiCtx,
     limits: StoreLimits,
+    outbound_http_allowed: bool,
 }
 
 impl WasiView for HostCtx {
@@ -37,6 +38,64 @@ impl WasiView for HostCtx {
 }
 
 impl wednes::function::types::Host for HostCtx {}
+
+#[async_trait]
+impl wednes::function::http_client::Host for HostCtx {
+    async fn send_request(
+        &mut self,
+        req: wednes::function::types::Request,
+    ) -> Result<wednes::function::types::Response, String> {
+        if !self.outbound_http_allowed {
+            return Err("permission denied: outbound_http capability is not enabled".to_string());
+        }
+
+        let method = match req.method.to_uppercase().as_str() {
+            "GET" => reqwest::Method::GET,
+            "POST" => reqwest::Method::POST,
+            "PUT" => reqwest::Method::PUT,
+            "DELETE" => reqwest::Method::DELETE,
+            "PATCH" => reqwest::Method::PATCH,
+            _ => return Err(format!("unsupported method: {}", req.method)),
+        };
+
+        let mut builder = reqwest::Client::new().request(method, &req.path);
+        for header in req.headers {
+            builder = builder.header(header.name, header.value);
+        }
+
+        if !req.body.is_empty() {
+            builder = builder.body(req.body);
+        }
+
+        let res = match builder.send().await {
+            Ok(res) => res,
+            Err(e) => return Err(e.to_string()),
+        };
+
+        let status = res.status().as_u16();
+
+        let mut headers = Vec::new();
+        for (name, value) in res.headers().iter() {
+            if let Ok(val_str) = value.to_str() {
+                headers.push(wednes::function::types::Header {
+                    name: name.as_str().to_string(),
+                    value: val_str.to_string(),
+                });
+            }
+        }
+
+        let body = match res.bytes().await {
+            Ok(b) => b.to_vec(),
+            Err(e) => return Err(e.to_string()),
+        };
+
+        Ok(wednes::function::types::Response {
+            status,
+            headers,
+            body,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -64,6 +123,7 @@ impl RuntimeBackend for WasmtimeBackend {
         let mut linker = Linker::new(&engine);
 
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
+        Function::add_to_linker(&mut linker, |state: &mut HostCtx| state)?;
 
         // Background epoch ticker: 1 tick = 25ms
         let ticker_engine = engine.weak();
@@ -99,7 +159,7 @@ impl RuntimeBackend for WasmtimeBackend {
         let component = Component::from_file(&self.engine, wasm_path)?;
         FunctionPre::new(self.linker.instantiate_pre(&component)?)?;
         self.components
-            .insert(manifest.name.clone(), (component, manifest.runtime.clone()));
+            .insert(manifest.name.clone(), (component, Some(manifest.clone())));
         Ok(())
     }
 
@@ -128,14 +188,24 @@ impl RuntimeBackend for WasmtimeBackend {
             .build();
         let limits = StoreLimitsBuilder::new()
             .memory_size(
-                runtime.as_ref().and_then(|r| r.memory_mb).unwrap_or(32) as usize * 1024 * 1024,
+                runtime
+                    .as_ref()
+                    .and_then(|r| r.runtime.as_ref().and_then(|rt| rt.memory_mb))
+                    .unwrap_or(32) as usize
+                    * 1024
+                    * 1024,
             )
             .build();
+
+        let outbound_http_allowed = wednes_capabilities::outbound_http_allowed(
+            runtime.as_ref().and_then(|r| r.capabilities.as_ref()),
+        );
 
         let ctx = HostCtx {
             table,
             wasi,
             limits,
+            outbound_http_allowed,
         };
         let mut store = Store::new(&self.engine, ctx);
         store.limiter(|state| &mut state.limits);
@@ -156,8 +226,12 @@ impl RuntimeBackend for WasmtimeBackend {
             body: request.body,
         };
 
-        let timeout =
-            Duration::from_millis(runtime.as_ref().and_then(|r| r.timeout_ms).unwrap_or(2000));
+        let timeout = Duration::from_millis(
+            runtime
+                .as_ref()
+                .and_then(|r| r.runtime.as_ref().and_then(|rt| rt.timeout_ms))
+                .unwrap_or(2000),
+        );
 
         let exec = async {
             let bindings = Function::instantiate_async(&mut store, component, &self.linker).await?;

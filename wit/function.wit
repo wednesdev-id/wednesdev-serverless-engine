@@ -18,7 +18,13 @@ interface types {
   }
 }
 
+interface http-client {
+  use types.{request, response};
+  send-request: func(req: request) -> result<response, string>;
+}
+
 world function {
   use types.{request, response};
+  import http-client;
   export handle: func(req: request) -> response;
 }
