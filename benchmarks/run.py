@@ -11,6 +11,8 @@ import platform
 import socket
 import subprocess
 import threading
+import tempfile
+import shutil
 import time
 import urllib.request
 import urllib.error
@@ -54,12 +56,12 @@ def main():
     process = None
     def start():
         t = time.perf_counter()
-        p = subprocess.Popen([binary,'run','--registry',str(registry),'--listen','127.0.0.1:18081','--global-concurrency','16'], stdout=log, stderr=log)
+        p = subprocess.Popen([binary,'run','--registry',str(registry),'--listen','127.0.0.1:18082','--global-concurrency','16'], stdout=log, stderr=log)
         while time.perf_counter()-t < 60:
             if p.poll() is not None:
                 raise RuntimeError('daemon exited before readiness')
             try:
-                with socket.create_connection(('127.0.0.1',18081), timeout=.05):
+                with socket.create_connection(('127.0.0.1',18082), timeout=.05):
                     return p, (time.perf_counter()-t)*1000
             except OSError:
                 time.sleep(.002)
@@ -69,7 +71,7 @@ def main():
         if barrier:
             barrier.wait(timeout=10)
         t = time.perf_counter()
-        request = urllib.request.Request('http://127.0.0.1:18081/fn/'+name,data=b'{"hello":1}',method='POST')
+        request = urllib.request.Request('http://127.0.0.1:18082/fn/'+name,data=b'{"hello":1}',method='POST')
         try:
             with urllib.request.urlopen(request,timeout=5) as response:
                 status, body = response.status, response.read()

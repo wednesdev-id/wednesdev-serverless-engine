@@ -137,14 +137,7 @@ impl RuntimeBackend for WasmtimeBackend {
         let mut store = Store::new(&self.engine, ctx);
         store.limiter(|state| &mut state.limits);
 
-        store.set_epoch_deadline(
-            runtime
-                .as_ref()
-                .and_then(|r| r.timeout_ms)
-                .unwrap_or(2000)
-                .div_ceil(25),
-        );
-        store.epoch_deadline_trap();
+        store.epoch_deadline_async_yield_and_update(1);
 
         let bindings = Function::instantiate_async(&mut store, component, &self.linker).await?;
 
@@ -162,7 +155,18 @@ impl RuntimeBackend for WasmtimeBackend {
             body: request.body,
         };
 
-        let res = bindings.call_handle(&mut store, &req).await?;
+        let timeout = Duration::from_millis(
+            runtime
+                .as_ref()
+                .and_then(|r| r.timeout_ms)
+                .unwrap_or(2000),
+        );
+
+        let res = match tokio::time::timeout(timeout, bindings.call_handle(&mut store, &req)).await {
+            Ok(Ok(res)) => res,
+            Ok(Err(e)) => bail!("Invocation error: {}", e),
+            Err(_) => bail!("timeout"),
+        };
 
         Ok(CoreResponse {
             status: res.status,
