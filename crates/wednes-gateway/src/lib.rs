@@ -73,6 +73,7 @@ impl Scheduler {
         }
     }
 
+    #[allow(clippy::result_unit_err)]
     pub fn try_acquire(&self, fn_id: &str) -> Result<ExecutionPermits, ()> {
         let mem_req = self
             .fn_configs

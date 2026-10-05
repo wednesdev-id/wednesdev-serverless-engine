@@ -7,4 +7,3 @@ edition = "2021"
 wednes-core = { path = "../wednes-core" }
 anyhow.workspace = true
 async-trait = "0.1"
-bytes.workspace = true

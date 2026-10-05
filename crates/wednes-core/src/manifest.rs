@@ -56,12 +56,12 @@ impl Manifest {
 
         if let Some(rt) = &self.runtime {
             if let Some(mem) = rt.memory_mb {
-                if mem < 1 || mem > 2048 {
+                if !(1..=2048).contains(&mem) {
                     bail!("invalid memory_mb: {}, must be between 1 and 2048 MB", mem);
                 }
             }
             if let Some(to) = rt.timeout_ms {
-                if to < 1 || to > 60_000 {
+                if !(1..=60_000).contains(&to) {
                     bail!("invalid timeout_ms: {}, must be between 1 and 60000 ms", to);
                 }
             }

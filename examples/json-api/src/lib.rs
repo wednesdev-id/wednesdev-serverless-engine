@@ -14,6 +14,7 @@ impl Guest for Component {
     }
 }
 
+#[cfg(test)]
 fn transform(body: &[u8]) -> (u16, Vec<u8>) {
     let req = Request {
         method: "POST".to_string(),

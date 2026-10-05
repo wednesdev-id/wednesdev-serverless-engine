@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 pub mod bindings {
     wit_bindgen::generate!({
         world: "function",
