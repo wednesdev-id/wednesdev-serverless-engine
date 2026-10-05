@@ -39,7 +39,11 @@ impl Scheduler {
     }
 
     pub fn try_acquire(&self, fn_id: &str) -> Result<ExecutionPermits, ()> {
-        let global = self.global_sem.clone().try_acquire_owned().map_err(|_| ())?;
+        let global = self
+            .global_sem
+            .clone()
+            .try_acquire_owned()
+            .map_err(|_| ())?;
 
         let fn_sem = {
             let mut sems = self.fn_sems.lock().unwrap();
@@ -133,20 +137,29 @@ async fn dispatch(
 
     match state.runtime.execute(&id, req).await {
         Ok(res) => {
-            let mut builder = axum::http::Response::builder()
-                .status(StatusCode::from_u16(res.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR));
-            
+            let mut builder = axum::http::Response::builder().status(
+                StatusCode::from_u16(res.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            );
+
             for h in res.headers {
                 builder = builder.header(h.name, h.value);
             }
 
-            builder.body(axum::body::Body::from(res.body)).unwrap_or_else(|_| {
-                (StatusCode::INTERNAL_SERVER_ERROR, "Failed to build response").into_response()
-            })
+            builder
+                .body(axum::body::Body::from(res.body))
+                .unwrap_or_else(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "Failed to build response",
+                    )
+                        .into_response()
+                })
         }
-        Err(err) => {
-            (StatusCode::INTERNAL_SERVER_ERROR, format!("Invocation error: {err}")).into_response()
-        }
+        Err(err) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Invocation error: {err}"),
+        )
+            .into_response(),
     }
 }
 

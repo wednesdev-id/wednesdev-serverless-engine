@@ -1,0 +1,8 @@
+name = "hello"
+abi = "wednes:function@0.1.0"
+artifact = "hello.wasm"
+
+[runtime]
+memory_mb = 32
+timeout_ms = 1000
+max_concurrency = 4

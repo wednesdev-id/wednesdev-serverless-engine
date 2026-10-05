@@ -38,6 +38,19 @@ impl WasiView for HostCtx {
 
 impl wednes::function::types::Host for HostCtx {}
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_backend_releases_engine() {
+        let backend = WasmtimeBackend::init().unwrap();
+        let weak = backend.engine.weak();
+        drop(backend);
+        assert!(weak.upgrade().is_none(), "epoch ticker retained engine");
+    }
+}
+
 #[async_trait]
 impl RuntimeBackend for WasmtimeBackend {
     fn init() -> Result<Self> {
@@ -53,10 +66,14 @@ impl RuntimeBackend for WasmtimeBackend {
         wasmtime_wasi::add_to_linker_async(&mut linker)?;
 
         // Background epoch ticker: 1 tick = 25ms
-        let ticker_engine = engine.clone();
+        let ticker_engine = engine.weak();
         std::thread::spawn(move || loop {
             std::thread::sleep(Duration::from_millis(25));
-            ticker_engine.increment_epoch();
+            if let Some(engine) = ticker_engine.upgrade() {
+                engine.increment_epoch();
+            } else {
+                break;
+            }
         });
 
         Ok(Self {
@@ -73,11 +90,16 @@ impl RuntimeBackend for WasmtimeBackend {
         Ok(())
     }
 
-    fn load_manifest(&mut self, manifest: &wednes_core::manifest::Manifest, wasm_path: &Path) -> Result<()> {
+    fn load_manifest(
+        &mut self,
+        manifest: &wednes_core::manifest::Manifest,
+        wasm_path: &Path,
+    ) -> Result<()> {
         manifest.validate()?;
         let component = Component::from_file(&self.engine, wasm_path)?;
         FunctionPre::new(self.linker.instantiate_pre(&component)?)?;
-        self.components.insert(manifest.name.clone(), (component, manifest.runtime.clone()));
+        self.components
+            .insert(manifest.name.clone(), (component, manifest.runtime.clone()));
         Ok(())
     }
 
@@ -102,14 +124,26 @@ impl RuntimeBackend for WasmtimeBackend {
         let table = ResourceTable::new();
         let wasi = WasiCtxBuilder::new().inherit_stdio().build();
         let limits = StoreLimitsBuilder::new()
-            .memory_size(runtime.as_ref().and_then(|r| r.memory_mb).unwrap_or(32) as usize * 1024 * 1024)
+            .memory_size(
+                runtime.as_ref().and_then(|r| r.memory_mb).unwrap_or(32) as usize * 1024 * 1024,
+            )
             .build();
 
-        let ctx = HostCtx { table, wasi, limits };
+        let ctx = HostCtx {
+            table,
+            wasi,
+            limits,
+        };
         let mut store = Store::new(&self.engine, ctx);
         store.limiter(|state| &mut state.limits);
 
-        store.set_epoch_deadline(runtime.as_ref().and_then(|r| r.timeout_ms).unwrap_or(2000).div_ceil(25));
+        store.set_epoch_deadline(
+            runtime
+                .as_ref()
+                .and_then(|r| r.timeout_ms)
+                .unwrap_or(2000)
+                .div_ceil(25),
+        );
         store.epoch_deadline_trap();
 
         let bindings = Function::instantiate_async(&mut store, component, &self.linker).await?;

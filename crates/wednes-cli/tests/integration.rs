@@ -20,15 +20,20 @@ fn test_deploy_invalid_leaves_existing_intact() -> Result<()> {
 
     // valid deploy
     let manifest_path = tmp.path().join("hello.toml");
-    fs::write(&manifest_path, r#"
+    fs::write(
+        &manifest_path,
+        r#"
 name = "hello"
 abi = "wednes:function@0.1.0"
 artifact = "hello.wasm"
-"#)?;
+"#,
+    )?;
     let status = Command::new(cli())
         .arg("deploy")
-        .arg("--manifest").arg(&manifest_path)
-        .arg("--registry").arg(&registry)
+        .arg("--manifest")
+        .arg(&manifest_path)
+        .arg("--registry")
+        .arg(&registry)
         .status()?;
     assert!(status.success());
 
@@ -37,15 +42,20 @@ artifact = "hello.wasm"
 
     // invalid name – registry must be unchanged
     let bad_path = tmp.path().join("bad.toml");
-    fs::write(&bad_path, r#"
+    fs::write(
+        &bad_path,
+        r#"
 name = "bad name!"
 abi = "wednes:function@0.1.0"
 artifact = "hello.wasm"
-"#)?;
+"#,
+    )?;
     let status = Command::new(cli())
         .arg("deploy")
-        .arg("--manifest").arg(&bad_path)
-        .arg("--registry").arg(&registry)
+        .arg("--manifest")
+        .arg(&bad_path)
+        .arg("--registry")
+        .arg(&registry)
         .status()?;
     assert!(!status.success());
 
@@ -54,30 +64,40 @@ artifact = "hello.wasm"
 
     // unknown fields
     let unk_path = tmp.path().join("unknown.toml");
-    fs::write(&unk_path, r#"
+    fs::write(
+        &unk_path,
+        r#"
 name = "bad-field"
 abi = "wednes:function@0.1.0"
 artifact = "hello.wasm"
 surprise = true
-"#)?;
+"#,
+    )?;
     let status = Command::new(cli())
         .arg("deploy")
-        .arg("--manifest").arg(&unk_path)
-        .arg("--registry").arg(&registry)
+        .arg("--manifest")
+        .arg(&unk_path)
+        .arg("--registry")
+        .arg(&registry)
         .status()?;
     assert!(!status.success());
 
     // unsupported ABI
     let abi_path = tmp.path().join("abi.toml");
-    fs::write(&abi_path, r#"
+    fs::write(
+        &abi_path,
+        r#"
 name = "bad-abi"
 abi = "wednes:function@0.2.0"
 artifact = "hello.wasm"
-"#)?;
+"#,
+    )?;
     let status = Command::new(cli())
         .arg("deploy")
-        .arg("--manifest").arg(&abi_path)
-        .arg("--registry").arg(&registry)
+        .arg("--manifest")
+        .arg(&abi_path)
+        .arg("--registry")
+        .arg(&registry)
         .status()?;
     assert!(!status.success());
 
@@ -92,7 +112,9 @@ fn test_hello_runs_and_repeated_invocations_work() -> Result<()> {
     fs::copy(hello_wasm(), &hello_wasm_dest)?;
 
     let manifest_path = tmp.path().join("hello.toml");
-    fs::write(&manifest_path, r#"
+    fs::write(
+        &manifest_path,
+        r#"
 name = "hello"
 abi = "wednes:function@0.1.0"
 artifact = "hello.wasm"
@@ -101,11 +123,14 @@ artifact = "hello.wasm"
 memory_mb = 32
 timeout_ms = 5000
 
-"#)?;
+"#,
+    )?;
     let status = Command::new(cli())
         .arg("deploy")
-        .arg("--manifest").arg(&manifest_path)
-        .arg("--registry").arg(&registry)
+        .arg("--manifest")
+        .arg(&manifest_path)
+        .arg("--registry")
+        .arg(&registry)
         .status()?;
     assert!(status.success());
 
@@ -128,7 +153,9 @@ async fn test_concurrency_rejects_with_429() -> Result<()> {
 
     // deploy with max_concurrency = 2
     let manifest_path = tmp.path().join("loop.toml");
-    fs::write(&manifest_path, r#"
+    fs::write(
+        &manifest_path,
+        r#"
 name = "loop"
 abi = "wednes:function@0.1.0"
 artifact = "infinite_loop.wasm"
@@ -137,12 +164,15 @@ artifact = "infinite_loop.wasm"
 memory_mb = 32
 timeout_ms = 2000
 max_concurrency = 2
-"#)?;
+"#,
+    )?;
 
     let status = Command::new(cli())
         .arg("deploy")
-        .arg("--manifest").arg(&manifest_path)
-        .arg("--registry").arg(&registry)
+        .arg("--manifest")
+        .arg(&manifest_path)
+        .arg("--registry")
+        .arg(&registry)
         .status()?;
     // NOTE: This will fail until we fix manifest.rs! We want this to fail in RED phase!
     if !status.success() {
@@ -157,8 +187,10 @@ max_concurrency = 2
     let mut daemon = Command::new(cli())
         .env("TOKIO_WORKER_THREADS", "10")
         .arg("run")
-        .arg("--listen").arg(format!("127.0.0.1:{}", port))
-        .arg("--registry").arg(&registry)
+        .arg("--listen")
+        .arg(format!("127.0.0.1:{}", port))
+        .arg("--registry")
+        .arg(&registry)
         .stdout(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::inherit())
         .spawn()?;
@@ -166,7 +198,10 @@ max_concurrency = 2
     // Wait until port is open
     let mut ready = false;
     for _ in 0..50 {
-        if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await.is_ok() {
+        if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+            .await
+            .is_ok()
+        {
             ready = true;
             break;
         }
@@ -180,10 +215,15 @@ max_concurrency = 2
     for _ in 0..4 {
         let b = barrier.clone();
         tasks.push(tokio::spawn(async move {
-            let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await.unwrap();
+            let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+                .await
+                .unwrap();
             b.wait().await;
-            use tokio::io::{AsyncWriteExt, AsyncReadExt};
-            stream.write_all(b"GET /fn/loop HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.unwrap();
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            stream
+                .write_all(b"GET /fn/loop HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
             let mut buf = vec![0; 1024];
             let n = stream.read(&mut buf).await.unwrap();
             let resp = String::from_utf8_lossy(&buf[..n]).to_string();
@@ -212,9 +252,17 @@ max_concurrency = 2
     // and 2 should be rejected immediately with 429!
     let count_429 = statuses.iter().filter(|&&s| s == 429).count();
     let count_500 = statuses.iter().filter(|&&s| s == 500).count();
-    
-    assert_eq!(count_429, 2, "Expected exactly 2 requests to be rejected with 429. Statuses: {:?}", statuses);
-    assert_eq!(count_500, 2, "Expected exactly 2 requests to fail with 500 (timeout trap). Statuses: {:?}", statuses);
+
+    assert_eq!(
+        count_429, 2,
+        "Expected exactly 2 requests to be rejected with 429. Statuses: {:?}",
+        statuses
+    );
+    assert_eq!(
+        count_500, 2,
+        "Expected exactly 2 requests to fail with 500 (timeout trap). Statuses: {:?}",
+        statuses
+    );
 
     Ok(())
 }
@@ -230,7 +278,9 @@ async fn test_load_global_concurrency_stability() -> Result<()> {
 
     // deploy hello with no per-function max_concurrency (falls back to global/default)
     let manifest_path = tmp.path().join("hello.toml");
-    fs::write(&manifest_path, r#"
+    fs::write(
+        &manifest_path,
+        r#"
 name = "hello"
 abi = "wednes:function@0.1.0"
 artifact = "hello.wasm"
@@ -238,12 +288,15 @@ artifact = "hello.wasm"
 [runtime]
 memory_mb = 32
 timeout_ms = 1000
-"#)?;
+"#,
+    )?;
 
     let status = Command::new(cli())
         .arg("deploy")
-        .arg("--manifest").arg(&manifest_path)
-        .arg("--registry").arg(&registry)
+        .arg("--manifest")
+        .arg(&manifest_path)
+        .arg("--registry")
+        .arg(&registry)
         .status()?;
     assert!(status.success());
 
@@ -254,15 +307,22 @@ timeout_ms = 1000
     let mut daemon = Command::new(cli())
         .env("TOKIO_WORKER_THREADS", "16")
         .arg("run")
-        .arg("--listen").arg(format!("127.0.0.1:{}", port))
-        .arg("--registry").arg(&registry)
-        .arg("--global-concurrency").arg("5")
-        .arg("--default-concurrency").arg("10")
+        .arg("--listen")
+        .arg(format!("127.0.0.1:{}", port))
+        .arg("--registry")
+        .arg(&registry)
+        .arg("--global-concurrency")
+        .arg("5")
+        .arg("--default-concurrency")
+        .arg("10")
         .spawn()?;
 
     let mut ready = false;
     for _ in 0..50 {
-        if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await.is_ok() {
+        if tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+            .await
+            .is_ok()
+        {
             ready = true;
             break;
         }
@@ -274,9 +334,16 @@ timeout_ms = 1000
     let mut tasks = vec![];
     for _ in 0..20 {
         tasks.push(tokio::spawn(async move {
-            let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await.unwrap();
-            use tokio::io::{AsyncWriteExt, AsyncReadExt};
-            stream.write_all(b"GET /fn/hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.unwrap();
+            let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+                .await
+                .unwrap();
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            stream
+                .write_all(
+                    b"GET /fn/hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
             let mut buf = vec![0; 1024];
             let n = stream.read(&mut buf).await.unwrap();
             String::from_utf8_lossy(&buf[..n]).to_string()
@@ -298,19 +365,34 @@ timeout_ms = 1000
     // Verify stability: we expect a mix of 200s and 429s, NO 500s or crashes
     let count_429 = statuses.iter().filter(|&&s| s == 429).count();
     let count_200 = statuses.iter().filter(|&&s| s == 200).count();
-    
+
     assert!(count_200 > 0, "At least some requests should succeed");
-    assert!(count_429 > 0, "At least some requests should be rate limited under pressure (global limit 5 vs load 20)");
-    assert_eq!(count_200 + count_429, 20, "All requests must complete as either 200 or 429, daemon remained stable");
+    assert!(
+        count_429 > 0,
+        "At least some requests should be rate limited under pressure (global limit 5 vs load 20)"
+    );
+    assert_eq!(
+        count_200 + count_429,
+        20,
+        "All requests must complete as either 200 or 429, daemon remained stable"
+    );
 
     // Verify it still responds successfully after the load burst
-    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await.unwrap();
-    use tokio::io::{AsyncWriteExt, AsyncReadExt};
-    stream.write_all(b"GET /fn/hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.unwrap();
+    let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+        .await
+        .unwrap();
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    stream
+        .write_all(b"GET /fn/hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
     let mut buf = vec![0; 1024];
     let n = stream.read(&mut buf).await.unwrap();
     let resp = String::from_utf8_lossy(&buf[..n]).to_string();
-    assert!(resp.contains("HTTP/1.1 200 OK"), "Daemon must remain healthy after load");
+    assert!(
+        resp.contains("HTTP/1.1 200 OK"),
+        "Daemon must remain healthy after load"
+    );
 
     daemon.kill()?;
     Ok(())

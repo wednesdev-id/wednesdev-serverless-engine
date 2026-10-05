@@ -13,7 +13,7 @@ impl Guest for Component {
             let chunk = vec![i as u8; 10 * 1024 * 1024];
             vecs.push(chunk);
         }
-        
+
         let body = format!("OOM test survived with {} buffers", vecs.len());
         Response {
             status: 200,

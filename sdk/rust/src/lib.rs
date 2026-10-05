@@ -6,10 +6,10 @@ pub mod bindings {
     });
 }
 
+pub use bindings::export;
 pub use bindings::wednes::function::types::Header;
 pub use bindings::wednes::function::types::Request;
 pub use bindings::wednes::function::types::Response;
-pub use bindings::export;
 
 impl Response {
     pub fn json(status: u16, body: impl Into<String>) -> Self {

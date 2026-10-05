@@ -1,9 +1,17 @@
+use wednes_core::{
+    manifest::{Manifest, RuntimeConfig},
+    Request,
+};
 use wednes_runtime::RuntimeBackend;
 use wednes_runtime_wasmtime::WasmtimeBackend;
-use wednes_core::{manifest::{Manifest, RuntimeConfig}, Request};
 
 fn req() -> Request {
-    Request { method: "GET".into(), path: "/".into(), headers: vec![], body: vec![] }
+    Request {
+        method: "GET".into(),
+        path: "/".into(),
+        headers: vec![],
+        body: vec![],
+    }
 }
 
 fn wasm_root() -> std::path::PathBuf {
@@ -18,12 +26,18 @@ async fn configured_limits_and_cached_execution() {
         name: "hello".into(),
         abi: "wednes:function@0.1.0".into(),
         artifact: "hello.wasm".into(),
-        runtime: Some(RuntimeConfig { memory_mb: Some(32), timeout_ms: Some(100), max_concurrency: None }),
+        runtime: Some(RuntimeConfig {
+            memory_mb: Some(32),
+            timeout_ms: Some(100),
+            max_concurrency: None,
+        }),
         capabilities: None,
     };
     b.load_manifest(&m, &root.join("hello.wasm")).unwrap();
     // Repeated invocations from cache
-    for _ in 0..3 { assert_eq!(b.execute("hello", req()).await.unwrap().status, 200); }
+    for _ in 0..3 {
+        assert_eq!(b.execute("hello", req()).await.unwrap().status, 200);
+    }
 
     // Low memory limit should make the function fail
     m.runtime.as_mut().unwrap().memory_mb = Some(1);
@@ -32,10 +46,15 @@ async fn configured_limits_and_cached_execution() {
 
     // Short timeout should trap infinite loop
     m.runtime.as_mut().unwrap().memory_mb = Some(32);
-    b.load_manifest(&m, &root.join("infinite_loop.wasm")).unwrap();
+    b.load_manifest(&m, &root.join("infinite_loop.wasm"))
+        .unwrap();
     let now = std::time::Instant::now();
     assert!(b.execute("hello", req()).await.is_err());
-    assert!(now.elapsed().as_millis() < 500, "timeout too slow: {}ms", now.elapsed().as_millis());
+    assert!(
+        now.elapsed().as_millis() < 500,
+        "timeout too slow: {}ms",
+        now.elapsed().as_millis()
+    );
 }
 
 #[test]

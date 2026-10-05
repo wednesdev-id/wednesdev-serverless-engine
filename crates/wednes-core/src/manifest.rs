@@ -36,14 +36,21 @@ pub struct Capabilities {
 impl Manifest {
     pub fn validate(&self) -> Result<()> {
         if self.abi != SUPPORTED_ABI {
-            bail!("unsupported ABI: {}, supported: {}", self.abi, SUPPORTED_ABI);
+            bail!(
+                "unsupported ABI: {}, supported: {}",
+                self.abi,
+                SUPPORTED_ABI
+            );
         }
 
         if self.name.is_empty()
             || self.name.contains('/')
             || self.name.contains('\\')
             || self.name.contains("..")
-            || !self.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+            || !self
+                .name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
         {
             bail!("unsafe or invalid manifest name: {}", self.name);
         }

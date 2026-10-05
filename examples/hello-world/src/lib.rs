@@ -9,8 +9,11 @@ struct Component;
 
 impl Guest for Component {
     fn handle(req: Request) -> Response {
-        let body = format!(r#"{{"message":"hello from wednes engine","path":"{}"}}"#, req.path);
-        
+        let body = format!(
+            r#"{{"message":"hello from wednes engine","path":"{}"}}"#,
+            req.path
+        );
+
         Response {
             status: 200,
             headers: vec![Header {

@@ -8,7 +8,10 @@ members = [
     "sdk/rust",
     "examples/hello-world",
     "examples/infinite-loop",
-    "examples/oom"
+    "examples/oom",
+    "examples/json-api",
+    "examples/webhook",
+    "examples/workload"
 ]
 resolver = "2"
 
