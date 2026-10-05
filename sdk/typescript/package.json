@@ -1,16 +1,19 @@
 {
-  "name": "@wednes/sdk-typescript",
-  "version": "0.1.0",
-  "description": "TypeScript SDK for Wednes Engine",
-  "type": "module",
+  "name": "typescript",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for creating Wednes Engine components.",
+  "main": "index.js",
   "scripts": {
-    "build": "tsc src/index.ts && jco componentize src/index.js --wit ../../wit/function.wit -n function -o dist/hello.wasm"
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
   "dependencies": {
-    "@bytecodealliance/componentize-js": "^0.11.0",
-    "jco": "^1.4.0"
+    "@bytecodealliance/componentize-js": "^0.23.0",
+    "@bytecodealliance/jco": "^1.36.0",
+    "@types/node": "^26.6.4",
+    "typescript": "^7.0.2"
   },
-  "devDependencies": {
-    "typescript": "^5.0.0"
-  }
+  "type": "module"
 }

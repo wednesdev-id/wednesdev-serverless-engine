@@ -19,9 +19,7 @@ export interface Response {
 export function handle(req: Request): Response {
   return {
     status: 200,
-    headers: [
-      { name: "content-type", value: "text/plain" }
-    ],
-    body: new TextEncoder().encode("Hello from Wednes TypeScript SDK!")
+    headers: [{ name: "Content-Type", value: "text/plain" }],
+    body: new TextEncoder().encode("Hello from TypeScript")
   };
 }

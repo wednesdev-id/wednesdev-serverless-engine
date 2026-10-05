@@ -64,16 +64,65 @@ enum Commands {
     },
 }
 
-fn setup_http3(listen: &str) -> Result<()> {
+async fn setup_http3(listen: &str, router: axum::Router) -> Result<()> {
     info!(
         "Generating self-signed TLS certificate for HTTP/3 QUIC on {}",
         listen
     );
-    // ponytail: HTTP/3 requires TLS 1.3 over QUIC. axum/hyper ecosystem requires custom quinn/h3 integration for full HTTP/3 loop.
-    // skipped: QUIC listener bind & HTTP/3 multiplexing, add when h3 crate stabilizes with hyper 1.0/axum 0.7.
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let _cert_der = cert.cert.der();
-    info!("Self-signed cert generated. TLS barrier: native Axum 0.7 lacks QUIC/HTTP3 natively, custom h3 loop required.");
+    let cert_der = cert.cert.der();
+    let key_der = cert.key_pair.serialize_der();
+
+    let cert_chain = vec![rustls::pki_types::CertificateDer::from(cert_der.to_vec())];
+    let key = rustls::pki_types::PrivateKeyDer::Pkcs8(rustls::pki_types::PrivatePkcs8KeyDer::from(
+        key_der,
+    ));
+
+    let mut crypto = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain, key)?;
+    crypto.alpn_protocols = vec![b"h3".to_vec()];
+
+    let server_config = quinn::ServerConfig::with_crypto(Arc::new(
+        quinn::crypto::rustls::QuicServerConfig::try_from(crypto)?,
+    ));
+
+    let endpoint = quinn::Endpoint::server(server_config, listen.parse()?)?;
+
+    tokio::spawn(async move {
+        while let Some(conn) = endpoint.accept().await {
+            let router = router.clone();
+            tokio::spawn(async move {
+                if let Ok(connection) = conn.await {
+                    let h3_conn = h3_quinn::Connection::new(connection);
+                    if let Ok(mut server) =
+                        h3::server::Connection::<_, bytes::Bytes>::new(h3_conn).await
+                    {
+                        while let Ok(Some(req_resolver)) = server.accept().await {
+                            let router = router.clone();
+                            tokio::spawn(async move {
+                                if let Ok((req, mut stream)) = req_resolver.resolve_request().await
+                                {
+                                    use tower::ServiceExt;
+                                    let (parts, _) = req.into_parts();
+                                    let axum_req = axum::http::Request::from_parts(
+                                        parts,
+                                        axum::body::Body::empty(),
+                                    );
+                                    let response = router.oneshot(axum_req).await.unwrap();
+                                    let (parts, _body) = response.into_parts();
+                                    let h3_res = axum::http::Response::from_parts(parts, ());
+                                    let _ = stream.send_response(h3_res).await;
+                                    let _ = stream.finish().await;
+                                }
+                            });
+                        }
+                    }
+                }
+            });
+        }
+    });
+
     Ok(())
 }
 
@@ -273,7 +322,7 @@ export!(Component);
             let runtime: Arc<dyn RuntimeBackend> = Arc::new(backend);
             let app = create_router(runtime, scheduler);
             if http3 || args.http3 {
-                setup_http3(&listen)?;
+                setup_http3(&listen, app.clone()).await?;
             }
             let listener = tokio::net::TcpListener::bind(&listen).await?;
             info!("wednesd HTTP gateway listening on {}", listen);
@@ -297,7 +346,7 @@ export!(Component);
             let runtime: Arc<dyn RuntimeBackend> = Arc::new(backend);
             let app = create_router(runtime, scheduler);
             if args.http3 {
-                setup_http3(&args.listen)?;
+                setup_http3(&args.listen, app.clone()).await?;
             }
             let listener = tokio::net::TcpListener::bind(&args.listen).await?;
             info!("wednesd HTTP gateway listening on {}", args.listen);

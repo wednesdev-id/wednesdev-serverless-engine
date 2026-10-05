@@ -2,6 +2,11 @@
 
 TypeScript SDK for creating Wednes Engine components.
 
+## Prerequisites
+
+- Node.js (v18+)
+- wasm-tools
+
 ## Build Process
 
 1. Install dependencies:
@@ -11,12 +16,17 @@ TypeScript SDK for creating Wednes Engine components.
 
 2. Compile TypeScript to JavaScript:
    ```bash
-   npx tsc src/index.ts
+   npx tsc
    ```
 
 3. Componentize the JavaScript file using `jco componentize`:
    ```bash
-   npx jco componentize src/index.js --wit ../../wit/function.wit -n function -o hello.wasm
+   npx jco componentize -w ../../wit dist/index.js -o app.wasm
    ```
 
-The resulting `hello.wasm` can be run in the Wednes Engine.
+4. Validate the WebAssembly component:
+   ```bash
+   wasm-tools validate app.wasm
+   ```
+
+The resulting `app.wasm` can be run in the Wednes Engine.

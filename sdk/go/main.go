@@ -1,23 +1,20 @@
 package main
 
-// Import generated bindings
 import (
-	// "wednes-sdk-go/gen" // Uncomment after running wit-bindgen
+	bindings "wednes-sdk-go/bindings"
 )
 
 func init() {
-	// Register implementation with generated bindings
-	// gen.SetFunction(impl{})
+	bindings.SetFunction(impl{})
 }
 
 type impl struct{}
 
-// Handle implements the export `handle: func(req: request) -> response`
-// func (i impl) Handle(req gen.Request) gen.Response {
-// 	return gen.Response{
-// 		Status: 200,
-// 		Body:   []byte("Hello from TinyGo WASM!"),
-// 	}
-// }
+func (i impl) Handle(req bindings.FunctionRequest) bindings.FunctionResponse {
+	return bindings.FunctionResponse{
+		Status: 200,
+		Body:   []byte("Hello from TinyGo WASM!"),
+	}
+}
 
 func main() {}

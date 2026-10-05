@@ -3,3 +3,9 @@
 Cargo.lock
 __pycache__/
 *.pyc
+
+.venv/
+node_modules/
+dist/
+*.wasm
+bindings/
