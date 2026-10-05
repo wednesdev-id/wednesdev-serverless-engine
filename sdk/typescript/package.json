@@ -1,0 +1,16 @@
+{
+  "name": "@wednes/sdk-typescript",
+  "version": "0.1.0",
+  "description": "TypeScript SDK for Wednes Engine",
+  "type": "module",
+  "scripts": {
+    "build": "tsc src/index.ts && jco componentize src/index.js --wit ../../wit/function.wit -n function -o dist/hello.wasm"
+  },
+  "dependencies": {
+    "@bytecodealliance/componentize-js": "^0.11.0",
+    "jco": "^1.4.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0"
+  }
+}

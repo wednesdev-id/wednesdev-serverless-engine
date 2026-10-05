@@ -32,6 +32,8 @@ struct Args {
     default_concurrency: usize,
     #[arg(long, global = true)]
     log_json: bool,
+    #[arg(long, global = true)]
+    http3: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -57,7 +59,19 @@ enum Commands {
         memory_budget_mb: usize,
         #[arg(long, default_value_t = 16)]
         default_concurrency: usize,
+        #[arg(long)]
+        http3: bool,
     },
+}
+
+fn setup_http3(listen: &str) -> Result<()> {
+    info!("Generating self-signed TLS certificate for HTTP/3 QUIC on {}", listen);
+    // ponytail: HTTP/3 requires TLS 1.3 over QUIC. axum/hyper ecosystem requires custom quinn/h3 integration for full HTTP/3 loop.
+    // skipped: QUIC listener bind & HTTP/3 multiplexing, add when h3 crate stabilizes with hyper 1.0/axum 0.7.
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
+    let _cert_der = cert.cert.der();
+    info!("Self-signed cert generated. TLS barrier: native Axum 0.7 lacks QUIC/HTTP3 natively, custom h3 loop required.");
+    Ok(())
 }
 
 #[tokio::main]
@@ -216,6 +230,7 @@ export!(Component);
             global_concurrency,
             memory_budget_mb,
             default_concurrency,
+            http3,
         }) => {
             let reg = FileRegistry::open(&registry)?;
             let mut backend = WasmtimeBackend::init()?;
@@ -254,6 +269,9 @@ export!(Component);
             ));
             let runtime: Arc<dyn RuntimeBackend> = Arc::new(backend);
             let app = create_router(runtime, scheduler);
+            if http3 || args.http3 {
+                setup_http3(&listen)?;
+            }
             let listener = tokio::net::TcpListener::bind(&listen).await?;
             info!("wednesd HTTP gateway listening on {}", listen);
             axum::serve(listener, app).await?;
@@ -275,6 +293,9 @@ export!(Component);
             ));
             let runtime: Arc<dyn RuntimeBackend> = Arc::new(backend);
             let app = create_router(runtime, scheduler);
+            if args.http3 {
+                setup_http3(&args.listen)?;
+            }
             let listener = tokio::net::TcpListener::bind(&args.listen).await?;
             info!("wednesd HTTP gateway listening on {}", args.listen);
             axum::serve(listener, app).await?;

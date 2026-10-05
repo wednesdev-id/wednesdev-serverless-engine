@@ -8,6 +8,8 @@ name = "wednesd"
 path = "src/main.rs"
 
 [dependencies]
+rcgen = "0.13"
+rustls = { version = "0.23", features = ["ring"] }
 wednes-core = { path = "../wednes-core" }
 wednes-runtime = { path = "../wednes-runtime" }
 wednes-runtime-wasmtime = { path = "../wednes-runtime-wasmtime" }
