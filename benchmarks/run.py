@@ -19,6 +19,8 @@ import urllib.error
 
 
 def percentiles(values):
+    if not values or any(not math.isfinite(v) or v < 0 for v in values):
+        raise ValueError('latency samples must be finite, nonnegative and nonempty')
     values = sorted(values)
     return {f'p{p}_ms': values[max(0, math.ceil(len(values)*p/100)-1)] for p in (50,95,99)}
 
@@ -41,8 +43,12 @@ def main():
     artifacts = Path(a.artifacts).resolve()
     output = Path(a.output).resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
+    workspace = tempfile.TemporaryDirectory(prefix='wednes-bench-')
+    source = artifacts
+    artifacts = Path(workspace.name)
+    for wasm in source.glob('*.wasm'):
+        shutil.copy2(wasm, artifacts/wasm.name)
     registry = artifacts/'registry.json'
-    registry.unlink(missing_ok=True)
     names = ['hello', 'json_api', 'webhook', 'cpu', 'memory', 'large-response', 'trap', 'infinite_loop', 'oom', 'hello2']
     for name in names:
         artifact = {'hello2':'hello', 'cpu':'workload', 'memory':'workload', 'large-response':'workload', 'trap':'workload'}.get(name, name)
@@ -78,6 +84,14 @@ def main():
         except urllib.error.HTTPError as response:
             status, body = response.code, response.read()
         assert status == expected, (name,status,body[:200])
+        if name == 'cpu/cpu':
+            assert json.loads(body)['result'] == 49995000
+        if name == 'memory/memory':
+            assert json.loads(body)['allocated'] == 65536
+        if name == 'large-response/large-response':
+            assert body == b'a' * 131072
+        if expected == 500:
+            report.setdefault('failure_responses', []).append({'case':name,'status':status,'body':body.decode(errors='replace')})
         if name == 'json_api':
             assert json.loads(body)['echo']['hello'] == 1
         if name == 'webhook':
@@ -86,6 +100,9 @@ def main():
     try:
         process, startup = start()
         report['startup_latency_ms'] = startup
+        report['daemon_pid'] = process.pid
+        report['proc_stat_before'] = Path(f'/proc/{process.pid}/stat').read_text()
+        suite_start = time.perf_counter()
         report['idle_rss_kib'] = proc_values(f'/proc/{process.pid}/status')['VmRSS']
         report['ten_registered_idle_rss_kib'] = report['idle_rss_kib']
         cold = [call('hello')]
@@ -98,7 +115,7 @@ def main():
             values = [call(name,500) for _ in range(3)]
             assert process.poll() is None
             call('hello')
-            report['cases'][name] = {'count':len(values),**percentiles(values),'same_pid_survived':process.pid}
+            report['cases'][name] = {'count':len(values),**percentiles(values),'raw_ms':values,'same_pid_survived':process.pid}
         malformed = artifacts/'bad.wasm'
         malformed.write_bytes(b'not wasm')
         bad_manifest = artifacts/'bad.toml'
@@ -107,11 +124,18 @@ def main():
         bad = subprocess.run([binary,'deploy','--manifest',str(bad_manifest),'--registry',str(registry)],stdout=subprocess.PIPE,stderr=subprocess.PIPE)
         assert bad.returncode != 0 and registry.read_bytes() == prior
         call('hello')
-        report['malformed_rejected'] = True
+        assert process.poll() is None
+        report['malformed_rejected'] = {'same_pid_survived':process.pid,'exit_code':bad.returncode,'stderr':bad.stderr.decode(errors='replace'),'registry_unchanged':True}
         barrier = threading.Barrier(16)
         with concurrent.futures.ThreadPoolExecutor(max_workers=16) as pool:
             values = list(pool.map(lambda _:call('hello',barrier=barrier),range(16)))
-        report['cases']['concurrency'] = {'clients':16,'successful':len(values),**percentiles(values)}
+        report['cases']['concurrency'] = {'clients':16,'successful':len(values),'raw_ms':values,**percentiles(values)}
+        report['proc_stat_after'] = Path(f'/proc/{process.pid}/stat').read_text()
+        ticks = os.sysconf('SC_CLK_TCK')
+        stats = [s.rsplit(')',1)[1].split() for s in (report['proc_stat_before'],report['proc_stat_after'])]
+        seconds = sum(int(stats[1][i])-int(stats[0][i]) for i in (11,12))/ticks
+        report['cpu_usage'] = {'user_system_seconds':seconds,'elapsed_seconds':time.perf_counter()-suite_start,'clock_ticks_per_second':ticks}
+        report['cpu_usage']['percent_one_core'] = seconds/report['cpu_usage']['elapsed_seconds']*100
         report['peak_rss_kib'] = proc_values(f'/proc/{process.pid}/status')['VmHWM']
         report['post_suite_rss_kib'] = proc_values(f'/proc/{process.pid}/status')['VmRSS']
         assert process.poll() is None
@@ -124,6 +148,7 @@ def main():
             process.terminate(); process.wait(); process = None
         report['cases']['cold-start'] = {'count':len(cold),**percentiles(cold),'raw_ms':cold,'definition':'first HTTP request after fresh daemon ready; startup compilation excluded'}
         report['startup_samples_ms'] = startups
+        report['cases']['startup-to-listener'] = {'count':len(startups),'raw_ms':startups,**percentiles(startups)}
         after = proc_values('/proc/meminfo')
         vm_after = proc_values('/proc/vmstat')
         report['swap'] = {'before_kib':before['SwapTotal']-before['SwapFree'],'after_kib':after['SwapTotal']-after['SwapFree'],'pswpin_delta':vm_after['pswpin']-vm_before['pswpin'],'pswpout_delta':vm_after['pswpout']-vm_before['pswpout']}
@@ -139,6 +164,7 @@ def main():
             process.terminate(); process.wait()
         output.write_text(json.dumps(report,indent=2)+'\n')
         log.close()
+        workspace.cleanup()
     lines = ['# Ubuntu 2 GB benchmark','',f'Revision: `{a.revision}`. Measured on `{report["host"]["platform"]}`.', f'RAM: {before["MemTotal"]} KiB; CPUs: {os.cpu_count()}; 10 functions; 32 MiB guest memory; 250 ms timeout.', '', '| Metric | Measured | Target |','|---|---:|---:|',f'| Idle RSS (10 functions) | {report["idle_rss_kib"]/1024:.2f} MiB | 64 MiB (10 functions: 150 MiB) |', f'| Startup to listener | {startup:.2f} ms | <500 ms |', f'| Peak RSS | {report["peak_rss_kib"]/1024:.2f} MiB | measured |', f'| Swap used | {report["swap"]["after_kib"]} KiB | 0 |',f'| Guest-caused crashes | {report["crash_count"]} | 0 |','','| Case | p50 ms | p95 ms | p99 ms |','|---|---:|---:|---:|']
     for name, values in report['cases'].items():
         lines.append(f'| {name} | {values["p50_ms"]:.3f} | {values["p95_ms"]:.3f} | {values["p99_ms"]:.3f} |')
