@@ -67,8 +67,10 @@ impl Manifest {
                     bail!("invalid timeout_ms: {}, must be between 1 and 60000 ms", to);
                 }
             }
-            if rt.max_concurrency.is_some() {
-                bail!("max_concurrency enforcement is unsupported until M4");
+            if let Some(conc) = rt.max_concurrency {
+                if conc == 0 {
+                    bail!("invalid max_concurrency: 0, must be >= 1");
+                }
             }
         }
 
@@ -131,9 +133,17 @@ mod tests {
         m.runtime = Some(RuntimeConfig {
             memory_mb: Some(0),
             timeout_ms: Some(0),
-            max_concurrency: Some(2),
+            max_concurrency: Some(0),
         });
         assert!(m.validate().is_err());
+
+        // Valid max_concurrency passes without invalid capabilities
+        m.runtime = Some(RuntimeConfig {
+            memory_mb: Some(32),
+            timeout_ms: Some(100),
+            max_concurrency: Some(4),
+        });
+        assert!(m.validate().is_ok());
 
         m.runtime = Some(RuntimeConfig {
             memory_mb: Some(32),

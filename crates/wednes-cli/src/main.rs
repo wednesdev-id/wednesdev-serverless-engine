@@ -1,13 +1,14 @@
 use anyhow::{bail, Result};
 use clap::{Parser, Subcommand};
+use std::collections::HashMap;
+use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tracing::info;
-use wednes_gateway::create_router;
+use wednes_core::{manifest::Manifest, registry::FileRegistry};
+use wednes_gateway::{create_router, Scheduler};
 use wednes_runtime::RuntimeBackend;
 use wednes_runtime_wasmtime::WasmtimeBackend;
-use wednes_core::{manifest::Manifest, registry::FileRegistry};
-use std::fs;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "Wednes Engine Function Daemon")]
@@ -22,6 +23,11 @@ struct Args {
     wasm: Option<PathBuf>,
     #[arg(short, long, default_value = "hello", global = true)]
     id: String,
+
+    #[arg(long, default_value_t = 100, global = true)]
+    global_concurrency: usize,
+    #[arg(long, default_value_t = 16, global = true)]
+    default_concurrency: usize,
 }
 
 #[derive(Subcommand, Debug)]
@@ -37,7 +43,11 @@ enum Commands {
         listen: String,
         #[arg(short, long)]
         registry: PathBuf,
-    }
+        #[arg(long, default_value_t = 100)]
+        global_concurrency: usize,
+        #[arg(long, default_value_t = 16)]
+        default_concurrency: usize,
+    },
 }
 
 #[tokio::main]
@@ -51,41 +61,61 @@ async fn main() -> Result<()> {
             let m_bytes = fs::read(&manifest)?;
             let manifest_str = String::from_utf8(m_bytes)?;
             let m: Manifest = toml::from_str(&manifest_str)?;
-            
+
             // Validate manifest limits etc
             m.validate()?;
-            
+
             // Precompile the component and cache it
             info!("Precompiling artifact: {}", m.artifact);
             let mut backend = WasmtimeBackend::init()?;
-            let artifact_path = manifest.parent().unwrap_or(std::path::Path::new("")).join(&m.artifact);
+            let artifact_path = manifest
+                .parent()
+                .unwrap_or(std::path::Path::new(""))
+                .join(&m.artifact);
             if !artifact_path.exists() {
                 bail!("Artifact not found: {:?}", artifact_path);
             }
             backend.precompile(&m.name, &artifact_path)?;
-            
+
             // Register
             let mut reg = FileRegistry::open(&registry)?;
             reg.register(m.clone())?;
             info!("Deployed function '{}' to registry {:?}", m.name, registry);
             Ok(())
-        },
-        Some(Commands::Run { listen, registry }) => {
+        }
+        Some(Commands::Run {
+            listen,
+            registry,
+            global_concurrency,
+            default_concurrency,
+        }) => {
             let reg = FileRegistry::open(&registry)?;
             let mut backend = WasmtimeBackend::init()?;
+            let mut fn_limits = HashMap::new();
             for (id, manifest) in reg.data.functions.iter() {
                 // Here we rely on Wasmtime's cache since we call load_module with the artifact path
-                let artifact_path = registry.parent().unwrap_or(std::path::Path::new("")).join(&manifest.artifact);
+                let artifact_path = registry
+                    .parent()
+                    .unwrap_or(std::path::Path::new(""))
+                    .join(&manifest.artifact);
                 backend.load_manifest(manifest, &artifact_path)?;
+                if let Some(conc) = manifest.runtime.as_ref().and_then(|r| r.max_concurrency) {
+                    fn_limits.insert(id.clone(), conc as usize);
+                }
                 info!("Loaded function '{}'", id);
             }
+            let scheduler = Arc::new(Scheduler::new(
+                global_concurrency,
+                fn_limits,
+                default_concurrency,
+            ));
             let runtime: Arc<dyn RuntimeBackend> = Arc::new(backend);
-            let app = create_router(runtime);
+            let app = create_router(runtime, scheduler);
             let listener = tokio::net::TcpListener::bind(&listen).await?;
             info!("wednesd HTTP gateway listening on {}", listen);
             axum::serve(listener, app).await?;
             Ok(())
-        },
+        }
         None => {
             // Backward compat
             info!("Starting wednesd on {} (legacy mode)", args.listen);
@@ -94,8 +124,13 @@ async fn main() -> Result<()> {
                 info!("Loading function '{}' from {:?}", args.id, wasm_path);
                 backend.load_module(&args.id, &wasm_path)?;
             }
+            let scheduler = Arc::new(Scheduler::new(
+                args.global_concurrency,
+                HashMap::new(),
+                args.default_concurrency,
+            ));
             let runtime: Arc<dyn RuntimeBackend> = Arc::new(backend);
-            let app = create_router(runtime);
+            let app = create_router(runtime, scheduler);
             let listener = tokio::net::TcpListener::bind(&args.listen).await?;
             info!("wednesd HTTP gateway listening on {}", args.listen);
             axum::serve(listener, app).await?;
