@@ -135,7 +135,7 @@ artifact = "infinite_loop.wasm"
 
 [runtime]
 memory_mb = 32
-timeout_ms = 500
+timeout_ms = 2000
 max_concurrency = 2
 "#)?;
 
@@ -176,9 +176,12 @@ max_concurrency = 2
 
     // Fire 4 concurrent requests
     let mut tasks = vec![];
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(4));
     for _ in 0..4 {
+        let b = barrier.clone();
         tasks.push(tokio::spawn(async move {
             let mut stream = tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port)).await.unwrap();
+            b.wait().await;
             use tokio::io::{AsyncWriteExt, AsyncReadExt};
             stream.write_all(b"GET /fn/loop HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n").await.unwrap();
             let mut buf = vec![0; 1024];
