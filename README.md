@@ -1,114 +1,416 @@
 # Wednes Serverless Engine
 
-Wednes Engine is an ultra-fast, WebAssembly Component Model-based serverless engine designed for Web, AI, and Microservices workloads.
+Wednes Engine adalah runtime Serverless WebAssembly berbasis **Wasmtime Component Model** yang dirancang untuk performa tinggi, cold start mendekati 0ms, dan hemat resource. Engine ini mendukung arsitektur multi-fungsi modern melalui manifest `wednes.yaml`.
 
-## Features
-- **Cold Start < 5ms**: Execution via Wasmtime.
-- **Polyglot**: Write in Rust, Go, TypeScript/JS, or Python.
-- **Framework Compatibility**: You can use familiar Web Frameworks (Axum, Fiber, Express, FastAPI) by bridging requests.
+---
 
-## How It Works
-The engine uses a custom ABI (`wednes:function@0.1.0`):
-```wit
-interface types {
-  record header { name: string, value: string }
-  record request { method: string, path: string, headers: list<header>, body: list<u8> }
-  record response { status: u16, headers: list<header>, body: list<u8> }
+## 🚀 Live Deployment via Web IDE (`cp.wednesdev.id`)
+
+Anda dapat langsung membuat, mengedit, men-download, dan men-deploy fungsi serverless melalui Control Plane:
+1. Buka **[cp.wednesdev.id](https://cp.wednesdev.id)**.
+2. Klik tombol **`+ New`** di panel Explorer.
+3. Pilih bahasa yang diinginkan (**Rust**, **Go**, **TypeScript**, atau **Python**).
+4. Klik **Create & Open in IDE**.
+5. Tekan tombol **▶ Run / Deploy** di sudut kanan atas.
+6. Function langsung live dan dapat diakses publik melalui endpoint:
+   `https://cp.wednesdev.id/api/run/{project_name}-{function_name}` atau via HTTP POST/GET.
+
+---
+
+## 📚 Katalog Studi Kasus (Siap Copy-Paste)
+
+Setiap contoh di bawah ini dirancang untuk struktur multi-fungsi atau single-fungsi menggunakan ABI `wednes:function@0.1.0`.
+
+---
+
+### 1. TypeScript / JavaScript
+
+#### Sederhana: Basic JSON Response & Greeting
+File: `src/index.ts`
+```typescript
+export function handle(req: any) {
+  const payload = {
+    status: 200,
+    message: "Hello from Wednes Serverless TypeScript!",
+    timestamp: new Date().toISOString()
+  };
+
+  return {
+    status: 200,
+    headers: [{ name: "content-type", value: "application/json" }],
+    body: Array.from(new TextEncoder().encode(JSON.stringify(payload)))
+  };
 }
+```
 
-world function {
-  use types.{request, response};
-  export handle: func(req: request) -> response;
+#### Kompleks: WhatsApp CRM Webhook Handler (Auto-Reply & Payload Parsing)
+File: `src/whatsapp.ts`
+```typescript
+export function handle(req: any) {
+  const method = req.method;
+  
+  // 1. WhatsApp Verification Challenge (GET)
+  if (method === "GET") {
+    return {
+      status: 200,
+      headers: [{ name: "content-type", value: "text/plain" }],
+      body: Array.from(new TextEncoder().encode("CHALLENGE_ACCEPTED"))
+    };
+  }
+
+  // 2. Incoming Message Processing (POST)
+  if (method === "POST") {
+    try {
+      const bodyStr = new TextDecoder().decode(new Uint8Array(req.body));
+      const data = JSON.parse(bodyStr);
+
+      const sender = data.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.from || "unknown";
+      const userText = data.entry?.[0]?.changes?.[0]?.value?.messages?.[0]?.text?.body || "";
+
+      // Logic CRM Auto-Responder
+      const reply = {
+        recipient_type: "individual",
+        to: sender,
+        type: "text",
+        text: { body: `Halo! Kami menerima pesan Anda: "${userText}". Tim CRM Wednesdev akan segera menghubungi Anda.` }
+      };
+
+      return {
+        status: 200,
+        headers: [{ name: "content-type", value: "application/json" }],
+        body: Array.from(new TextEncoder().encode(JSON.stringify(reply)))
+      };
+    } catch (e: any) {
+      return {
+        status: 400,
+        headers: [{ name: "content-type", value: "application/json" }],
+        body: Array.from(new TextEncoder().encode(JSON.stringify({ error: e.message })))
+      };
+    }
+  }
+
+  return { status: 405, headers: [], body: [] };
 }
 ```
 
 ---
 
-## Web Framework Integration (Microservices & Chat CRM)
+### 2. Python
 
-To minimize the technical gap, you can wrap your existing Web Framework inside the `handle` export. Below are examples of using familiar frameworks to build practical applications like WhatsApp CRM integration or Shopify Webhooks.
-
-### 1. Python (FastAPI Adapter)
-Using `componentize-py`. You can use the popular `asgi-tools` or write a lightweight WSGI/ASGI wrapper.
-
-**Scraping / Shopify Integration Example:**
+#### Sederhana: Simple Health Check & System Status
+File: `app.py`
 ```python
 from wit_world.imports.types import Request, Response, Header
 import json
-import urllib.request # Native requests
+
+class WitWorld:
+    def handle(self, req: Request) -> Response:
+        res_data = {
+            "status": "healthy",
+            "runtime": "wednesd-wasm-python",
+            "method": req.method,
+            "path": req.path
+        }
+        return Response(
+            status=200,
+            headers=[Header(name="content-type", value="application/json")],
+            body=json.dumps(res_data).encode("utf-8")
+        )
+```
+
+#### Kompleks: Web Scraper & Shopify Webhook Processor
+File: `app.py`
+```python
+from wit_world.imports.types import Request, Response, Header
+import json
+import urllib.request
 
 class WitWorld:
     def handle(self, req: Request) -> Response:
         path = req.path
         method = req.method
-        
-        # Simple Framework Routing Logic
-        if path == "/webhook/shopify" and method == "POST":
-            # Process Shopify Webhook
-            payload = json.loads(bytes(req.body).decode('utf-8'))
-            return Response(status=200, headers=[], body=b'{"status": "received"}')
-            
-        elif path == "/api/scrape":
-            # Scraping logic
-            res = urllib.request.urlopen("https://dummyjson.com/products/1")
-            data = res.read()
-            return Response(status=200, headers=[], body=data)
 
-        return Response(status=404, headers=[], body=b'Not Found')
+        # Route A: Web Scraper / Product Extractor
+        if path == "/api/scrape":
+            try:
+                # Mengambil data dari upstream API/Website
+                req_obj = urllib.request.Request(
+                    "https://dummyjson.com/products/1",
+                    headers={"User-Agent": "WednesServerless/1.0"}
+                )
+                with urllib.request.urlopen(req_obj) as resp:
+                    raw_data = resp.read()
+                    product = json.loads(raw_data)
+                    
+                output = {
+                    "scraped_title": product.get("title"),
+                    "price": product.get("price"),
+                    "source": "Wednes Scraper WASM"
+                }
+                return Response(
+                    status=200,
+                    headers=[Header(name="content-type", value="application/json")],
+                    body=json.dumps(output).encode("utf-8")
+                )
+            except Exception as e:
+                return Response(
+                    status=500,
+                    headers=[Header(name="content-type", value="application/json")],
+                    body=json.dumps({"error": str(e)}).encode("utf-8")
+                )
+
+        # Route B: Shopify Order Created Webhook
+        elif path == "/webhook/shopify" and method == "POST":
+            payload = json.loads(bytes(req.body).decode("utf-8"))
+            order_id = payload.get("id", "N/A")
+            total = payload.get("total_price", "0.00")
+
+            ack = {
+                "acknowledged": True,
+                "order_id": order_id,
+                "total_processed": total,
+                "system": "Wednes Engine CRM"
+            }
+            return Response(
+                status=200,
+                headers=[Header(name="content-type", value="application/json")],
+                body=json.dumps(ack).encode("utf-8")
+            )
+
+        return Response(status=404, headers=[], body=b'{"error": "Route Not Found"}')
 ```
 
-### 2. TypeScript / Express-like (Componentize-JS)
+---
 
-**WhatsApp CRM Webhook Example:**
-```typescript
-export function handle(req: any) {
-  const path = req.path;
-  const method = req.method;
-  
-  if (path === "/webhook/whatsapp" && method === "POST") {
-    const bodyStr = new TextDecoder().decode(new Uint8Array(req.body));
-    const payload = JSON.parse(bodyStr);
-    
-    // CRM Logic here: auto-reply to customer
-    const reply = {
-      messaging_product: "whatsapp",
-      to: payload.entry[0].changes[0].value.messages[0].from,
-      text: { body: "Hello from Wednes CRM Serverless!" }
-    };
-    
-    return {
-      status: 200,
-      headers: [{ name: "content-type", value: "application/json" }],
-      body: Array.from(new TextEncoder().encode(JSON.stringify(reply)))
-    };
-  }
+### 3. Go (Golang)
 
-  return { status: 404, headers: [], body: [] };
+#### Sederhana: Echo Endpoint & Query Parser
+File: `src/main.go`
+```go
+package main
+
+import (
+	"encoding/json"
+	"active-function/function"
+)
+
+type MyFunction struct{}
+
+func (m MyFunction) Handle(req function.FunctionRequest) function.FunctionResponse {
+	respData, _ := json.Marshal(map[string]interface{}{
+		"status":  "ok",
+		"engine":  "Wednes TinyGo WASM",
+		"path":    req.Path,
+		"headers": len(req.Headers),
+	})
+
+	return function.FunctionResponse{
+		Status: 200,
+		Headers: []function.WednesFunction0_1_0_TypesHeader{
+			{Name: "content-type", Value: "application/json"},
+		},
+		Body: respData,
+	}
 }
+
+func init() {
+	function.SetFunction(MyFunction{})
+}
+
+func main() {}
 ```
 
-### 3. Rust (Axum-like routing macro)
-For Rust, the SDK (`wednes_sdk`) exports the structures. You can map the incoming `req: Request` to an `http::Request<Vec<u8>>` if you want to use the `axum` or `router` ecosystem inside the WASM sandbox.
+#### Kompleks: Financial Transaction Validator & Tax Calculator
+File: `src/main.go`
+```go
+package main
 
+import (
+	"encoding/json"
+	"active-function/function"
+)
+
+type TransactionRequest struct {
+	Subtotal float64 `json:"subtotal"`
+	TaxRate  float64 `json:"tax_rate"`
+	Discount float64 `json:"discount"`
+}
+
+type TransactionResult struct {
+	Subtotal float64 `json:"subtotal"`
+	Tax      float64 `json:"tax"`
+	Total    float64 `json:"total"`
+	Status   string  `json:"status"`
+}
+
+type MyFunction struct{}
+
+func (m MyFunction) Handle(req function.FunctionRequest) function.FunctionResponse {
+	if req.Method != "POST" {
+		return function.FunctionResponse{
+			Status: 405,
+			Body:   []byte(`{"error": "Method Not Allowed"}`),
+		}
+	}
+
+	var tx TransactionRequest
+	err := json.Unmarshal(req.Body, &tx)
+	if err != nil {
+		return function.FunctionResponse{
+			Status: 400,
+			Body:   []byte(`{"error": "Invalid JSON format"}`),
+		}
+	}
+
+	// Hitung PPN & Total
+	taxAmount := (tx.Subtotal - tx.Discount) * (tx.TaxRate / 100.0)
+	finalTotal := (tx.Subtotal - tx.Discount) + taxAmount
+
+	res := TransactionResult{
+		Subtotal: tx.Subtotal,
+		Tax:      taxAmount,
+		Total:    finalTotal,
+		Status:   "VALIDATED_BY_WEDNES",
+	}
+
+	body, _ := json.Marshal(res)
+
+	return function.FunctionResponse{
+		Status: 200,
+		Headers: []function.WednesFunction0_1_0_TypesHeader{
+			{Name: "content-type", Value: "application/json"},
+		},
+		Body: body,
+	}
+}
+
+func init() {
+	function.SetFunction(MyFunction{})
+}
+
+func main() {}
+```
+
+---
+
+### 4. Rust
+
+#### Sederhana: Static Route & Ping-Pong
+File: `src/lib.rs`
 ```rust
-use wednes_sdk::{export, Request, Response, Header};
+wit_bindgen::generate!({
+    world: "function",
+    path: "wit",
+});
+
+use wednes::function::types::{Header, Request, Response};
 
 struct Component;
 
-impl wednes_sdk::function::Guest for Component {
+impl Guest for Component {
     fn handle(req: Request) -> Response {
-        match (req.method.as_str(), req.path.as_str()) {
-            ("POST", "/crm/message") => {
-                let msg = std::str::from_utf8(&req.body).unwrap();
-                Response::json(200, format!("{\"reply\": \"Received: {}\"}", msg))
-            },
-            _ => Response::json(404, "{\"error\": \"Not Found\"}")
+        let body = format!(
+            r#"{{"status": "ok", "path": "{}", "engine": "Wednes Rust Wasmtime"}}"#,
+            req.path
+        );
+
+        Response {
+            status: 200,
+            headers: vec![Header {
+                name: "content-type".to_string(),
+                value: "application/json".to_string(),
+            }],
+            body: body.into_bytes(),
         }
     }
 }
+
 export!(Component);
 ```
 
-## Outbound HTTP (Scraping)
-Outbound HTTP fetching requires the `wasi:http/outgoing-handler` capability. Currently, Wednes Engine executes components with restricted capabilities to prevent unauthorized network access. Scraping can be achieved natively via standard library tools (like `urllib` in Python or `fetch` in JS) once the Outbound HTTP capability is enabled in your function manifest.
+#### Kompleks: Token Authentication & API Gateway Dispatcher
+File: `src/lib.rs`
+```rust
+wit_bindgen::generate!({
+    world: "function",
+    path: "wit",
+});
 
+use wednes::function::types::{Header, Request, Response};
+
+struct Component;
+
+impl Guest for Component {
+    fn handle(req: Request) -> Response {
+        // 1. Validasi Authorization Header
+        let is_authorized = req.headers.iter().any(|h| {
+            h.name.to_lowercase() == "authorization" && h.value == "Bearer wednes-secret-token"
+        });
+
+        if !is_authorized {
+            return Response {
+                status: 401,
+                headers: vec![Header {
+                    name: "content-type".to_string(),
+                    value: "application/json".to_string(),
+                }],
+                body: br#"{"error": "Unauthorized Access"}"#.to_vec(),
+            };
+        }
+
+        // 2. Dispatching Path
+        let res_body = match req.path.as_str() {
+            "/api/v1/users" => {
+                r#"{"users": [{"id": 1, "name": "Feri"}, {"id": 2, "name": "Wednes"}]}"#
+            }
+            "/api/v1/stats" => {
+                r#"{"uptime": "99.99%", "active_sandboxes": 10, "latency_us": 240}"#
+            }
+            _ => {
+                return Response {
+                    status: 404,
+                    headers: vec![],
+                    body: br#"{"error": "Not Found"}"#.to_vec(),
+                };
+            }
+        };
+
+        Response {
+            status: 200,
+            headers: vec![Header {
+                name: "content-type".to_string(),
+                value: "application/json".to_string(),
+            }],
+            body: res_body.as_bytes().to_vec(),
+        }
+    }
+}
+
+export!(Component);
+```
+
+---
+
+## ⚙️ Menjalankan Multi-Fungsi (`wednes.yaml`)
+
+Untuk menggabungkan banyak fungsi dalam satu project, buat file `wednes.yaml` di root direktori project Anda:
+
+```yaml
+version: "1.0"
+name: "crm-service"
+
+functions:
+  whatsapp:
+    handler: src/whatsapp.ts
+    route: /webhook/whatsapp
+
+  shopify:
+    handler: src/shopify.ts
+    route: /webhook/shopify
+
+  scraper:
+    handler: src/scraper.py
+    route: /api/scrape
+```
+
+Saat Anda menekan tombol **Deploy**, Wednes Engine akan secara otomatis mengompilasi masing-masing fungsi ke artifact WebAssembly terpisah dan meregistrasikannya ke daemon runtime.
