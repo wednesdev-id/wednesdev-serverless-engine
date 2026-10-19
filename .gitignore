@@ -9,3 +9,8 @@ node_modules/
 dist/
 *.wasm
 bindings/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+.vitepress/dist/
+.vitepress/cache/
+

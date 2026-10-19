@@ -7,6 +7,7 @@ members = [
     "crates/wednes-runtime-wasmtime",
     "crates/wednes-gateway",
     "crates/wednes-cli",
+    "crates/wednes-artifact-crypto",
     "sdk/rust",
     "examples/hello-world",
     "examples/infinite-loop",
